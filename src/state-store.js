@@ -109,7 +109,8 @@ export class StateStore {
     if (!auth) return { signedIn: false };
     return {
       signedIn: true,
-      demoMode: Boolean(auth.demoMode),
+      liveStream: Boolean(auth.gsToken),
+      provider: auth.provider || 'xbox',
       gamertag: auth.gamertag || 'Xbox Player',
       uhs: auth.uhs || '',
       offeringId: auth.offeringId || 'xgpuweb',

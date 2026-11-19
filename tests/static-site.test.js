@@ -7,7 +7,7 @@ import os from 'node:os';
 
 import { buildStaticSite } from '../scripts/build-site.mjs';
 import { staticBackend, resetStaticCatalogCache } from '../public/js/static-backend.js';
-import { appUrl, setStaticMode, artworkUrl } from '../public/js/paths.js';
+import { appUrl, apiUrl, setStaticMode, isStaticMode, setRelayUrl, getRelayUrl, artworkUrl } from '../public/js/paths.js';
 import { buildPlayXboxUrl, SIGL_GUIDS, fetchFullXboxCatalogSnapshot } from '../public/js/xbox-catalog.js';
 
 if (typeof globalThis.localStorage === 'undefined') {
@@ -17,6 +17,11 @@ if (typeof globalThis.localStorage === 'undefined') {
     setItem: (k, v) => mem.set(k, String(v)),
     removeItem: (k) => mem.delete(k),
   };
+}
+
+function makeFakeJwt(claims) {
+  const b64 = (obj) => Buffer.from(JSON.stringify(obj), 'utf8').toString('base64url');
+  return `${b64({ alg: 'none', typ: 'JWT' })}.${b64(claims)}.sig`;
 }
 
 test('Static site builder outputs complete GitHub Pages bundle with subpath-safe assets', async () => {
@@ -38,21 +43,21 @@ test('Static site builder outputs complete GitHub Pages bundle with subpath-safe
   }
 });
 
-test('staticBackend supports full client-only Sandbox Demo, catalog, settings, and inline SVG artwork', async () => {
+test('staticBackend performs real Microsoft Device Code OAuth2, Relay URL routing, settings, and offline fallback', async () => {
+  setRelayUrl('');
   setStaticMode(true);
   resetStaticCatalogCache();
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => {
-    throw new Error('Offline sandbox');
-  };
+
   try {
+    // 1) Offline sandbox behavior: catalog falls back cleanly & OAuth reports oauthUnavailable honestly
+    globalThis.fetch = async () => {
+      throw new Error('Offline sandbox');
+    };
     const initial = await staticBackend.getState();
     assert.equal(initial.staticSiteMode, true);
     assert.equal(initial.auth.signedIn, false);
-
-    const signedIn = await staticBackend.demoSignIn('PagesPlayer');
-    assert.equal(signedIn.auth.signedIn, true);
-    assert.equal(signedIn.auth.gamertag, 'PagesPlayer');
+    assert.equal('demoSignIn' in staticBackend, false);
 
     await staticBackend.saveSettings({
       public: { language: 'fr' },
@@ -70,13 +75,72 @@ test('staticBackend supports full client-only Sandbox Demo, catalog, settings, a
     const favs = await staticBackend.toggleFavorite('BT5P2X999VH2');
     assert.ok(favs.favorites.includes('BT5P2X999VH2'));
 
-    const play = await staticBackend.playSession('BT5P2X999VH2');
-    assert.equal(play.demoMode, true);
-    assert.equal(play.state, 'Provisioned');
+    await assert.rejects(() => staticBackend.startDeviceCode(), (err) => err.payload?.oauthUnavailable === true);
+    await assert.rejects(() => staticBackend.playSession('BT5P2X999VH2'), (err) => err.payload?.usePlayXbox === true);
 
-    await assert.rejects(() => staticBackend.startDeviceCode(), (err) => err.payload?.sandboxUnavailable === true);
+    // 2) Microsoft OAuth2 Device Code + JWT Identity Claim extraction when Microsoft endpoint responds
+    const idJwt = makeFakeJwt({ name: 'HaloChief', preferred_username: 'chief@outlook.com', sub: 'ms-sub-99' });
+    let pollCount = 0;
+    globalThis.fetch = async (url) => {
+      const s = String(url);
+      if (s.includes('/oauth2/v2.0/devicecode')) {
+        return new Response(
+          JSON.stringify({
+            device_code: 'dc-12345',
+            user_code: 'ABCD1234',
+            verification_uri: 'https://www.microsoft.com/link',
+            expires_in: 900,
+            interval: 5,
+          }),
+          { status: 200 }
+        );
+      }
+      if (s.includes('/oauth2/v2.0/token')) {
+        pollCount += 1;
+        if (pollCount === 1) {
+          return new Response(JSON.stringify({ error: 'authorization_pending' }), { status: 400 });
+        }
+        return new Response(
+          JSON.stringify({
+            access_token: 'ms-access-token',
+            id_token: idJwt,
+            expires_in: 3600,
+          }),
+          { status: 200 }
+        );
+      }
+      throw new TypeError('CORS blocked on Xbox Live');
+    };
+
+    const dc = await staticBackend.startDeviceCode();
+    assert.equal(dc.userCode, 'ABCD1234');
+    assert.equal(dc.verificationUri, 'https://www.microsoft.com/link');
+
+    const pending = await staticBackend.pollDeviceCode();
+    assert.equal(pending.status, 'pending');
+
+    const authorized = await staticBackend.pollDeviceCode();
+    assert.equal(authorized.status, 'authorized');
+    assert.equal(authorized.auth.signedIn, true);
+    assert.equal(authorized.auth.gamertag, 'HaloChief');
+    assert.equal(authorized.auth.email, 'chief@outlook.com');
+    assert.equal(authorized.auth.offeringId, 'play.xbox.com');
+    assert.equal(authorized.auth.liveStream, false);
+
+    // 3) Relay URL configuration overrides static mode cleanly
+    const savedRelay = setRelayUrl('http://localhost:3000/');
+    assert.equal(savedRelay, 'http://localhost:3000');
+    assert.equal(getRelayUrl(), 'http://localhost:3000');
+    assert.equal(isStaticMode(), false);
+    assert.equal(apiUrl('api/state'), 'http://localhost:3000/api/state');
+    setRelayUrl('');
+    setStaticMode(true);
+
     await staticBackend.logout(true);
+    const loggedOut = await staticBackend.getState();
+    assert.equal(loggedOut.auth.signedIn, false);
   } finally {
+    setRelayUrl('');
     globalThis.fetch = realFetch;
     resetStaticCatalogCache();
     setStaticMode(false);

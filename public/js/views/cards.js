@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Shared UI cards, horizontal shelves, and accessible modal helper. */
+/* Shared UI cards, horizontal shelves with chevron navigation, and accessible modal helper. */
 
 import { t, trCategory } from '../i18n.js';
 import { icon } from '../icons.js';
 import { artworkUrl } from '../paths.js';
+import { buildPlayXboxUrl } from '../xbox-catalog.js';
 
 export function escapeHtml(str) {
   return String(str ?? '')
@@ -34,13 +35,15 @@ export function formatRelativeTime(ts) {
 
 export function renderGameCard(item, { isFav = false, recentInfo = null, variant = 'wide' } = {}) {
   const pid = escapeHtml(item.productId);
-  const title = escapeHtml(item.title || item.titleId || pid);
+  const rawTitle = item.title || item.titleId || pid;
+  const title = escapeHtml(rawTitle);
   const imgUrl = escapeHtml(
     (variant === 'poster' ? item.posterUrl : item.coverUrl) ||
     item.coverUrl ||
     artworkUrl(pid, 'cover.svg')
   );
   const fallbackImg = escapeHtml(artworkUrl(pid, 'cover.svg'));
+  const playUrl = escapeHtml(item.playUrl || buildPlayXboxUrl(item.productId, rawTitle));
   const cat = trCategory(item.category || '');
   const metaParts = [];
   if (cat) metaParts.push(cat);
@@ -48,37 +51,65 @@ export function renderGameCard(item, { isFav = false, recentInfo = null, variant
   else if (item.year) metaParts.push(item.year);
 
   return `
-    <button class="x4-game-card ${variant === 'poster' ? 'is-poster' : ''} x4-focusable" data-action="open-game" data-product-id="${pid}" type="button">
-      <div class="x4-game-thumb">
-        <img src="${imgUrl}" alt="${title}" loading="lazy" onerror="this.onerror=null;this.src='${fallbackImg}';" />
-        ${item.freeToPlay ? `<span class="x4-badge-f2p">${t('X4_TR_CATALOG_FREE')}</span>` : ''}
-        ${isFav ? `<span class="x4-badge-fav" title="${t('X4_TR_U49_FAVORITES')}">${icon('heart-filled')}</span>` : ''}
-        <div class="x4-game-thumb-scrim"></div>
-      </div>
-      <div class="x4-game-meta">
-        <div class="x4-game-title">${title}</div>
-        <div class="x4-game-sub">${escapeHtml(metaParts.join(' · ') || 'Xbox Cloud Gaming')}</div>
-      </div>
-    </button>
+    <div class="x4-game-card ${variant === 'poster' ? 'is-poster' : ''}">
+      <button class="x4-game-card-hit x4-focusable" data-action="open-game" data-product-id="${pid}" type="button">
+        <div class="x4-game-thumb">
+          <img src="${imgUrl}" alt="${title}" loading="lazy" onerror="this.onerror=null;this.src='${fallbackImg}';" />
+          ${item.freeToPlay ? `<span class="x4-badge-f2p">${t('X4_TR_CATALOG_FREE')}</span>` : ''}
+          ${isFav ? `<span class="x4-badge-fav" title="${t('X4_TR_U49_FAVORITES')}">${icon('heart-filled')}</span>` : ''}
+          <div class="x4-game-thumb-scrim"></div>
+        </div>
+        <div class="x4-game-meta">
+          <div class="x4-game-title">${title}</div>
+          <div class="x4-game-sub">${escapeHtml(metaParts.join(' · ') || 'Xbox Cloud Gaming')}</div>
+        </div>
+      </button>
+      <a class="x4-card-quickplay x4-focusable" href="${playUrl}" target="_blank" rel="noopener noreferrer"
+        data-play-xbox="${pid}" title="Play ${title} on play.xbox.com" aria-label="Play ${title} on play.xbox.com">
+        ${icon('play')}
+      </a>
+    </div>
   `;
 }
 
-export function renderShelfSection({ id, title, items, favorites = [], localRecents = {}, seeAllRoute = null }) {
+export function renderShelfSection({
+  id,
+  title,
+  items,
+  favorites = [],
+  localRecents = {},
+  seeAllRoute = null,
+  seeAllCollection = null,
+}) {
   if (!items || items.length === 0) return '';
   const favSet = new Set(favorites);
   return `
     <section class="x4-shelf" data-shelf="${escapeHtml(id)}">
       <div class="x4-shelf-head">
         <h2 class="x4-shelf-title">${escapeHtml(title)} <span class="x4-count-pill">${items.length}</span></h2>
-        ${
-          seeAllRoute
-            ? `<button class="x4-link-btn x4-focusable" data-action="navigate" data-route="${escapeHtml(seeAllRoute)}" type="button">
-                 <span>${t('X4_TR_U49_SEE_ALL')}</span> ${icon('chevron-right')}
-               </button>`
-            : ''
-        }
+        <div class="x4-shelf-controls">
+          <div class="x4-shelf-arrows">
+            <button class="x4-shelf-arrow x4-focusable" data-shelf-scroll="-1" data-shelf-id="${escapeHtml(id)}" type="button" aria-label="Scroll left">
+              ${icon('chevron-left')}
+            </button>
+            <button class="x4-shelf-arrow x4-focusable" data-shelf-scroll="1" data-shelf-id="${escapeHtml(id)}" type="button" aria-label="Scroll right">
+              ${icon('chevron-right')}
+            </button>
+          </div>
+          ${
+            seeAllCollection
+              ? `<button class="x4-link-btn x4-focusable" data-action="browse-collection" data-collection="${escapeHtml(seeAllCollection)}" type="button">
+                   <span>${t('X4_TR_U49_SEE_ALL')}</span> ${icon('chevron-right')}
+                 </button>`
+              : seeAllRoute
+                ? `<button class="x4-link-btn x4-focusable" data-action="navigate" data-route="${escapeHtml(seeAllRoute)}" type="button">
+                     <span>${t('X4_TR_U49_SEE_ALL')}</span> ${icon('chevron-right')}
+                   </button>`
+                : ''
+          }
+        </div>
       </div>
-      <div class="x4-shelf-track">
+      <div class="x4-shelf-track" data-shelf-track="${escapeHtml(id)}">
         ${items.map((item) => renderGameCard(item, { isFav: favSet.has(item.productId), recentInfo: localRecents[item.productId] })).join('')}
       </div>
     </section>

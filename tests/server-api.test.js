@@ -22,7 +22,7 @@ async function startTestServer() {
   };
 }
 
-test('HTTP server serves SPA assets, catalog APIs, settings, library, and demo stream', async () => {
+test('HTTP server serves SPA assets, catalog APIs, settings, library, CORS relay headers, and rejects unauthenticated play', async () => {
   const srv = await startTestServer();
   try {
     // Static SPA entry, CSS, i18n dictionary, and bundled fonts/icons
@@ -40,12 +40,19 @@ test('HTTP server serves SPA assets, catalog APIs, settings, library, and demo s
     assert.ok(i18nData.tables.es);
     assert.equal(i18nData.stages.length, 229);
 
+    // Relay CORS preflight & API CORS header
+    const preflightRes = await fetch(`${srv.baseUrl}/api/state`, { method: 'OPTIONS' });
+    assert.equal(preflightRes.status, 204);
+    assert.equal(preflightRes.headers.get('access-control-allow-origin'), '*');
+
     // State & Settings update
     const stateRes = await fetch(`${srv.baseUrl}/api/state`);
     assert.equal(stateRes.status, 200);
+    assert.equal(stateRes.headers.get('access-control-allow-origin'), '*');
     const stateJson = await stateRes.json();
     assert.equal(stateJson.identity.publicVersion, '1.3.0-beta');
     assert.equal(stateJson.identity.labVersion, '0.7.111-lab');
+    assert.equal(stateJson.auth.signedIn, false);
 
     const postSettingsRes = await fetch(`${srv.baseUrl}/api/settings`, {
       method: 'POST',
@@ -77,23 +84,23 @@ test('HTTP server serves SPA assets, catalog APIs, settings, library, and demo s
     assert.equal(resetJson.settings.lab.enabled, true);
     assert.equal(resetJson.settings.lab.gyroSensitivity, 0.85);
 
-    // Demo Auth & Cloud Time
+    // Demo endpoint must not exist & unauthenticated play/quota must reject with 401
     const demoAuthRes = await fetch(`${srv.baseUrl}/api/auth/demo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ gamertag: 'ArenaPlayer' }),
     });
-    assert.equal(demoAuthRes.status, 200);
-    const demoAuthJson = await demoAuthRes.json();
-    assert.equal(demoAuthJson.auth.signedIn, true);
-    assert.equal(demoAuthJson.auth.demoMode, true);
-    assert.equal(demoAuthJson.auth.gamertag, 'ArenaPlayer');
+    assert.equal(demoAuthRes.status, 404);
 
     const quotaRes = await fetch(`${srv.baseUrl}/api/account/cloud-time`);
-    assert.equal(quotaRes.status, 200);
-    const quotaJson = await quotaRes.json();
-    assert.equal(quotaJson.cloudTime.available, true);
-    assert.ok(quotaJson.cloudTime.remainingSeconds > 0);
+    assert.equal(quotaRes.status, 401);
+
+    const unauthPlayRes = await fetch(`${srv.baseUrl}/api/session/play`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ titleId: 'BT5P2X999VH2' }),
+    });
+    assert.equal(unauthPlayRes.status, 401);
 
     // Public Lists, Catalog Browse/Search, Product, Favorites, My Games, Playtime
     const listsRes = await fetch(`${srv.baseUrl}/api/catalog/public-lists`);
@@ -101,6 +108,7 @@ test('HTTP server serves SPA assets, catalog APIs, settings, library, and demo s
     const listsJson = await listsRes.json();
     assert.ok(Array.isArray(listsJson.lists.popular) && listsJson.lists.popular.length > 0);
     assert.ok(listsJson.metadata.BT5P2X999VH2);
+    assert.equal(listsJson.metadata.BT5P2X999VH2.playUrl, 'https://www.xbox.com/play/games/fortnite/BT5P2X999VH2');
 
     const searchRes = await fetch(`${srv.baseUrl}/api/catalog?q=fortnite`);
     assert.equal(searchRes.status, 200);
@@ -130,23 +138,11 @@ test('HTTP server serves SPA assets, catalog APIs, settings, library, and demo s
     const ptJson = await playTimeRes.json();
     assert.equal(ptJson.localRecents.BT5P2X999VH2.playTimeSec, 120);
 
-    // Demo Stream Lifecycle (/api/session/play -> state -> connect -> delete)
-    const startStream = await fetch(`${srv.baseUrl}/api/session/play`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ titleId: 'BT5P2X999VH2' }),
-    });
-    assert.equal(startStream.status, 200);
-    const session = await startStream.json();
-    assert.equal(session.demoMode, true);
-    assert.ok(session.sessionId);
-
-    const pollState = await fetch(`${srv.baseUrl}/api/session/${session.sessionId}/state`);
-    assert.equal(pollState.status, 200);
-    assert.equal((await pollState.json()).state, 'Provisioned');
-
-    const delStream = await fetch(`${srv.baseUrl}/api/session/${session.sessionId}`, { method: 'DELETE' });
-    assert.equal(delStream.status, 200);
+    // Server Ping
+    const pingRes = await fetch(`${srv.baseUrl}/api/servers/ping`);
+    assert.equal(pingRes.status, 200);
+    const pingJson = await pingRes.json();
+    assert.ok(Array.isArray(pingJson.regions) && pingJson.regions.length > 0);
 
     // QR + Licenses + Fallback SVG art
     const qrRes = await fetch(`${srv.baseUrl}/api/qr.svg?text=https://ko-fi.com/asapedgr`);

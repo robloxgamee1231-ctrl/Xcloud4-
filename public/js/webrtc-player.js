@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Browser WebRTC cloud streaming engine + FidelityFX CAS WebGL post-processor + Interactive Demo Canvas. */
+/* Browser WebRTC cloud streaming engine + FidelityFX CAS WebGL post-processor + Xbox GSSV Input 1.0 pipeline. */
 
 import { api } from './api.js';
 import {
@@ -189,7 +189,6 @@ export class CloudStreamSession {
     this.scriptEngine.onNotify = (msg) => this.onServerNotice(msg);
 
     this.sessionId = null;
-    this.demoMode = false;
     this.aborted = false;
     this.pc = null;
     this.channels = {};
@@ -197,8 +196,6 @@ export class CloudStreamSession {
     this.videoEl = null;
     this.audioEl = null;
     this.webgl = null;
-    this.audioCtx = null;
-    this.sourceCanvas = null; // Used by Interactive Sandbox Demo stream
     this.rafId = 0;
     this.inputTimer = 0;
     this.statsTimer = 0;
@@ -212,26 +209,6 @@ export class CloudStreamSession {
     this.liveSharpness = settings?.lab?.enabled ? Number(settings.lab.sharpness ?? 1) : 1;
     this.announcedMask = 1;
     this.lastSentBytes = { video: 0, ts: 0 };
-
-    // Demo arena interactive state
-    this.sim = {
-      x: 0.5,
-      y: 0.55,
-      aimX: 0.62,
-      aimY: 0.42,
-      particles: [],
-      targets: Array.from({ length: 6 }, (_, i) => ({
-        x: 0.2 + i * 0.13,
-        y: 0.24 + (i % 2) * 0.12,
-        vx: (i % 2 === 0 ? 1 : -1) * (0.08 + i * 0.02),
-        hp: 100,
-      })),
-      score: 0,
-      lastShotAt: 0,
-      nexusGlow: 0,
-      inputCount: 0,
-      lastPadSnapshot: null,
-    };
   }
 
   async start(renderCanvas, videoEl, audioEl) {
@@ -249,12 +226,6 @@ export class CloudStreamSession {
       if (this.aborted) return;
 
       this.sessionId = playRes.sessionId;
-      this.demoMode = Boolean(playRes.demoMode);
-
-      if (this.demoMode) {
-        await this._startDemoFlow();
-        return;
-      }
 
       // Live Xbox session provisioning loop
       this.onStage({ step: 2, key: 'X4_TR_SESSION_WAITING', waitSec: 0 });
@@ -264,25 +235,6 @@ export class CloudStreamSession {
         throw err;
       }
     }
-  }
-
-  async _startDemoFlow() {
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    await sleep(360);
-    if (this.aborted) return;
-    this.onStage({ step: 2, key: 'X4_TR_SESSION_CONNECTING', waitSec: 0 });
-    await sleep(320);
-    if (this.aborted) return;
-    this.onStage({ step: 3, key: 'X4_TR_SESSION_NEGOTIATING', waitSec: 0 });
-    await sleep(320);
-    if (this.aborted) return;
-    this.onStage({ step: 4, key: 'X4_TR_SESSION_READY', waitSec: 0 });
-
-    this.sourceCanvas = document.createElement('canvas');
-    this.sourceCanvas.width = this.profile.width;
-    this.sourceCanvas.height = this.profile.height;
-
-    this._startMediaLoops();
   }
 
   async _provisionAndNegotiateLive() {
@@ -538,8 +490,8 @@ export class CloudStreamSession {
       height: this.profile.height,
       profileLabel: this.profile.label,
       shaderMode: this._shaderLabel(),
-      rttMs: this.demoMode ? 18 : -1,
-      mbps: this.demoMode ? this.profile.bitrateKbps / 1000 : 0,
+      rttMs: -1,
+      mbps: 0,
     });
 
     const pollInputMs = lab.enabled && lab.input60hz ? 16 : 8;
@@ -559,15 +511,11 @@ export class CloudStreamSession {
       this.lastFrameAt = now;
       this.hud.recordFrameInterval(dtMs);
 
-      if (this.demoMode && this.sourceCanvas) {
-        this._drawDemoStreamFrame(dtMs / 1000);
-      }
+      const source = this.videoEl;
+      const w = this.videoEl?.videoWidth || this.profile.width;
+      const h = this.videoEl?.videoHeight || this.profile.height;
 
-      const source = this.demoMode ? this.sourceCanvas : this.videoEl;
-      const w = this.demoMode ? this.sourceCanvas.width : (this.videoEl?.videoWidth || this.profile.width);
-      const h = this.demoMode ? this.sourceCanvas.height : (this.videoEl?.videoHeight || this.profile.height);
-
-      if (source && (this.demoMode || (this.videoEl && this.videoEl.readyState >= 2))) {
+      if (source && this.videoEl.readyState >= 2) {
         if (!forceCpu && this.webgl?.supported) {
           const dither = lab.enabled ? lab.dither : true;
           const deband = lab.enabled ? lab.deband : true;
@@ -613,13 +561,6 @@ export class CloudStreamSession {
 
   _sampleAndSendInput(dtSec) {
     const { pads, connectedMask } = this._readAllGamepads(dtSec);
-    this.sim.lastPadSnapshot = pads[0];
-    this.sim.inputCount++;
-
-    if (this.demoMode) {
-      this._stepDemoPhysics(pads[0], dtSec);
-      return;
-    }
 
     const inputCh = this.channels.input;
     const ctrlCh = this.channels.control;
@@ -645,189 +586,7 @@ export class CloudStreamSession {
     }
   }
 
-  _stepDemoPhysics(pad, dt) {
-    const s = this.sim;
-    const lx = (pad.leftX || 0) / 32767;
-    const ly = (pad.leftY || 0) / 32767;
-    const rx = (pad.rightX || 0) / 32767;
-    const ry = (pad.rightY || 0) / 32767;
-
-    s.x = Math.max(0.08, Math.min(0.92, s.x + lx * 0.42 * dt));
-    s.y = Math.max(0.18, Math.min(0.88, s.y - ly * 0.42 * dt));
-    s.aimX = Math.max(0.05, Math.min(0.95, s.aimX + rx * 0.65 * dt));
-    s.aimY = Math.max(0.10, Math.min(0.90, s.aimY - ry * 0.65 * dt));
-
-    for (const tg of s.targets) {
-      tg.x += tg.vx * dt;
-      if (tg.x < 0.1 || tg.x > 0.9) tg.vx = -tg.vx;
-    }
-
-    const firing = Boolean(pad.buttons & XBOX_BUTTONS.A) || pad.rightTrigger > 32768;
-    const now = performance.now();
-    if (firing && now - s.lastShotAt > 75) {
-      s.lastShotAt = now;
-      const dx = s.aimX - s.x;
-      const dy = s.aimY - s.y;
-      const mag = Math.hypot(dx, dy) || 1;
-      s.particles.push({ x: s.x, y: s.y, vx: (dx / mag) * 1.15, vy: (dy / mag) * 1.15, life: 1.0 });
-      this._playDemoTone(360, 0.045, 0.025);
-
-      // Check immediate hit along reticle + emit FourMotorRumble test packet
-      for (const tg of s.targets) {
-        if (Math.hypot(tg.x - s.aimX, tg.y - s.aimY) < 0.055) {
-          s.score += 100;
-          tg.hp = tg.hp <= 25 ? 100 : tg.hp - 25;
-          this._playDemoTone(tg.hp === 100 ? 880 : 620, 0.08, 0.045);
-          if (this.settings?.lab?.rumbleEnabled !== false) {
-            this.onRumble({
-              kind: 'valid',
-              gamepadIndex: 0,
-              leftMotor: 65,
-              rightMotor: 40,
-              leftTrigger: 35,
-              rightTrigger: 80,
-              durationMs: 140,
-            });
-          }
-          break;
-        }
-      }
-    }
-
-    for (let i = s.particles.length - 1; i >= 0; i--) {
-      const p = s.particles[i];
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.life -= dt * 1.4;
-      if (p.life <= 0) s.particles.splice(i, 1);
-    }
-    if (pad.buttons & XBOX_BUTTONS.NEXUS) s.nexusGlow = 1;
-    else s.nexusGlow = Math.max(0, s.nexusGlow - dt * 2.5);
-  }
-
-  _drawDemoStreamFrame() {
-    const ctx = this.sourceCanvas.getContext('2d');
-    const w = this.sourceCanvas.width;
-    const h = this.sourceCanvas.height;
-    const tNow = performance.now() * 0.001;
-    const s = this.sim;
-
-    // Rich dark gradient sky + terrain grid (great for testing FidelityFX CAS & Deband!)
-    const bg = ctx.createLinearGradient(0, 0, 0, h);
-    bg.addColorStop(0, '#070E18');
-    bg.addColorStop(0.55, '#0D2235');
-    bg.addColorStop(1, '#091A24');
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, w, h);
-
-    // Subtle perspective grid
-    ctx.strokeStyle = 'rgba(50, 243, 139, 0.13)';
-    ctx.lineWidth = 1.5;
-    for (let gx = 0; gx <= 16; gx++) {
-      const x = (gx / 16) * w;
-      ctx.beginPath();
-      ctx.moveTo(x, h * 0.48);
-      ctx.lineTo(w * 0.5 + (x - w * 0.5) * 2.4, h);
-      ctx.stroke();
-    }
-    for (let gy = 0; gy < 9; gy++) {
-      const p = ((gy + (tNow * 1.2) % 1) / 9);
-      const y = h * 0.48 + p * p * h * 0.52;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
-      ctx.stroke();
-    }
-
-    // Targets
-    for (const tg of s.targets) {
-      const tx = tg.x * w;
-      const ty = tg.y * h;
-      ctx.fillStyle = 'rgba(245, 166, 35, 0.16)';
-      ctx.beginPath();
-      ctx.arc(tx, ty, 34, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#F5A623';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(tx, ty, 22, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = '#32F38B';
-      ctx.fillRect(tx - 24, ty - 34, 48 * (tg.hp / 100), 5);
-    }
-
-    // Projectiles
-    for (const p of s.particles) {
-      ctx.fillStyle = `rgba(50, 243, 139, ${p.life})`;
-      ctx.beginPath();
-      ctx.arc(p.x * w, p.y * h, 7, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Player craft
-    const px = s.x * w;
-    const py = s.y * h;
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.fillStyle = '#32F38B';
-    ctx.beginPath();
-    ctx.moveTo(0, -24);
-    ctx.lineTo(20, 18);
-    ctx.lineTo(0, 9);
-    ctx.lineTo(-20, 18);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-
-    // Aim Reticle
-    const ax = s.aimX * w;
-    const ay = s.aimY * h;
-    ctx.strokeStyle = '#32F38B';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(ax, ay, 18, 0, Math.PI * 2);
-    ctx.moveTo(ax - 26, ay);
-    ctx.lineTo(ax - 10, ay);
-    ctx.moveTo(ax + 10, ay);
-    ctx.lineTo(ax + 26, ay);
-    ctx.moveTo(ax, ay - 26);
-    ctx.lineTo(ax, ay - 10);
-    ctx.moveTo(ax, ay + 10);
-    ctx.lineTo(ax, ay + 26);
-    ctx.stroke();
-
-    // Stream telemetry banner (positioned neatly below Quick Menu button)
-    ctx.fillStyle = 'rgba(7, 14, 24, 0.72)';
-    ctx.fillRect(24, 84, 580, 82);
-    ctx.strokeStyle = 'rgba(50, 243, 139, 0.35)';
-    ctx.strokeRect(24, 84, 580, 82);
-    ctx.fillStyle = '#F6F9FD';
-    ctx.font = 'bold 22px Inter, sans-serif';
-    ctx.fillText(`${this.title.title} · Interactive Stream Preview`, 42, 117);
-    ctx.fillStyle = '#B1C1D2';
-    ctx.font = '15px Inter, sans-serif';
-    const scriptTag = this.scriptEngine.activeScript ? `Script: ${this.scriptEngine.activeScript}` : 'Script: Off';
-    ctx.fillText(`Score ${s.score} · ${this.profile.label} · ${scriptTag} · Input #${s.inputCount}`, 42, 146);
-
-    if (s.nexusGlow > 0.01) {
-      ctx.fillStyle = `rgba(50, 243, 139, ${s.nexusGlow * 0.25})`;
-      ctx.fillRect(0, 0, w, h);
-    }
-  }
-
   async _collectStats() {
-    if (this.demoMode) {
-      const simRtt = 16 + Math.round(Math.sin(performance.now() * 0.002) * 3);
-      const simMbps = (this.profile.bitrateKbps / 1000) * (0.94 + Math.random() * 0.08);
-      this.hud.updateStats({
-        fps: 60,
-        mbps: simMbps,
-        lossPct: (this.settings?.lab?.enabled ? this.settings.lab.lossSim : 0),
-        rttMs: simRtt,
-        jitterMs: 1.8,
-      });
-      return;
-    }
     if (!this.pc) return;
     try {
       const stats = await this.pc.getStats();
@@ -863,27 +622,6 @@ export class CloudStreamSession {
       this.hud.updateStats({ height, fps, mbps: Math.max(0, mbps), lossPct, rttMs, jitterMs });
     } catch {
       // Ignore transient getStats error
-    }
-  }
-
-  _playDemoTone(freq = 440, durSec = 0.05, gainVal = 0.03) {
-    if (this.muted || typeof window === 'undefined') return;
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtx) return;
-    try {
-      if (!this.audioCtx) this.audioCtx = new AudioCtx();
-      if (this.audioCtx.state === 'suspended') this.audioCtx.resume().catch(() => {});
-      const osc = this.audioCtx.createOscillator();
-      const gain = this.audioCtx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(gainVal, this.audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, this.audioCtx.currentTime + durSec);
-      osc.connect(gain).connect(this.audioCtx.destination);
-      osc.start();
-      osc.stop(this.audioCtx.currentTime + durSec);
-    } catch {
-      // Audio context blocked before gesture
     }
   }
 
@@ -928,10 +666,6 @@ export class CloudStreamSession {
     if (this.keepaliveTimer) clearInterval(this.keepaliveTimer);
     if (this.playTimeTimer) clearInterval(this.playTimeTimer);
     if (this.keyboardDriver?.clearTouch) this.keyboardDriver.clearTouch();
-    if (this.audioCtx) {
-      try { await this.audioCtx.close(); } catch {}
-      this.audioCtx = null;
-    }
 
     if (this.micStream) {
       for (const tr of this.micStream.getTracks()) tr.stop();

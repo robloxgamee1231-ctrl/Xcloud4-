@@ -118,7 +118,7 @@ test('StateStore persists settings, favorites, recents, and sanitized auth secur
     store.state.favorites.push('BT5P2X999VH2');
     store.state.localRecents.BT5P2X999VH2 = { playSeconds: 180, lastPlayedAt: 1700000000000 };
     store.state.auth = {
-      demoMode: false,
+      provider: 'xbox',
       gamertag: 'TestPlayer',
       uhs: '2533274812345678',
       refreshToken: 'SUPER_SECRET_REFRESH_TOKEN',
@@ -128,6 +128,7 @@ test('StateStore persists settings, favorites, recents, and sanitized auth secur
 
     const sanitized = store.getSanitizedAuth();
     assert.equal(sanitized.signedIn, true);
+    assert.equal(sanitized.liveStream, true);
     assert.equal(sanitized.gamertag, 'TestPlayer');
     assert.equal('refreshToken' in sanitized, false);
     assert.equal('gsToken' in sanitized, false);

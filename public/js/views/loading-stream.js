@@ -179,7 +179,7 @@ export async function launchGameStream({ title, profile, settings, keyboardDrive
       if (step >= 4) {
         loadingEl.hidden = true;
         stageEl.hidden = false;
-        modeBadgeEl.textContent = session.demoMode ? w('streamSim') : w('streamLive');
+        modeBadgeEl.textContent = w('streamLive');
         const casNames = ['Off', '0.4', '0.7'];
         overlay.querySelector('#x4QmCasLabel').textContent = `CAS: ${casNames[session.liveSharpness] || '0.4'}`;
         hud.renderInto(hudEl);
@@ -256,7 +256,7 @@ export async function launchGameStream({ title, profile, settings, keyboardDrive
     stick.addEventListener('pointercancel', resetStick);
   }
 
-  // Allow mouse aiming/firing directly on the demo canvas (clicks feed RT)
+  // Allow pointer aiming/firing directly on the stream canvas
   canvasEl.addEventListener('pointerdown', (e) => {
     if (e.button === 0) keyboardDriver.setTouchButton('rt', true);
     else if (e.button === 2) keyboardDriver.setTouchButton('lt', true);

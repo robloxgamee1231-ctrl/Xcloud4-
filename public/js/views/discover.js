@@ -15,13 +15,13 @@ export function renderDiscoverView(state) {
   const featuredList = mapIds(publicLists?.popular);
   const featured = featuredList[0] || catalogItems[0];
   const featuredPlayUrl = featured ? (featured.playUrl || buildPlayXboxUrl(featured.productId, featured.title)) : '';
-  const liveStreamReady = Boolean(auth?.signedIn && !auth?.demoMode);
+  const liveStreamReady = Boolean(auth?.signedIn && auth?.liveStream);
 
   const shelves = [
+    { id: 'popular', title: t('X4_TR_U49_POPULAR_CLOUD'), items: mapIds(publicLists?.popular) },
     { id: 'free', title: t('X4_TR_CATALOG_FREE'), items: mapIds(publicLists?.free) },
     { id: 'new', title: t('X4_TR_U49_SORT_NEW'), items: mapIds(publicLists?.new) },
-    { id: 'popular', title: t('X4_TR_U49_POPULAR_CLOUD'), items: mapIds(publicLists?.popular) },
-    { id: 'leaving', title: t('X4_TR_U49_COLLECTIONS') + ' · Leaving Soon', items: mapIds(publicLists?.leaving) },
+    { id: 'leaving', title: 'Leaving Soon', items: mapIds(publicLists?.leaving) },
   ];
 
   return `
@@ -49,15 +49,12 @@ export function renderDiscoverView(state) {
                   ? `<button class="x4-btn is-primary x4-focusable" data-action="play-game" data-product-id="${escapeHtml(featured.productId)}" type="button">
                        ${icon('play')} <span>${t('X4_TR_APPLE_PLAY_NOW_BTN')}</span>
                      </button>
-                     <a class="x4-btn is-secondary x4-focusable" href="${escapeHtml(featuredPlayUrl)}" target="_blank" rel="noopener noreferrer">
+                     <a class="x4-btn is-secondary x4-focusable" href="${escapeHtml(featuredPlayUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="${escapeHtml(featured.productId)}">
                        ${icon('world')} <span>${w('playOnXbox')}</span>
                      </a>`
-                  : `<a class="x4-btn is-primary x4-focusable" href="${escapeHtml(featuredPlayUrl)}" target="_blank" rel="noopener noreferrer">
+                  : `<a class="x4-btn is-primary x4-focusable" href="${escapeHtml(featuredPlayUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="${escapeHtml(featured.productId)}">
                        ${icon('play')} <span>${w('playOnXbox')}</span>
-                     </a>
-                     <button class="x4-btn is-secondary x4-focusable" data-action="${auth?.signedIn ? 'play-game' : 'demo-play'}" data-product-id="${escapeHtml(featured.productId)}" type="button">
-                       ${icon('device-gamepad')} <span>${w('streamPreviewBtn')}</span>
-                     </button>`
+                     </a>`
               }
               <button class="x4-btn is-ghost x4-focusable" data-action="open-game" data-product-id="${escapeHtml(featured.productId)}" type="button">
                 <span>${t('X4_TR_U49_VIEW_GAME_SHORT')}</span>
@@ -76,7 +73,7 @@ export function renderDiscoverView(state) {
             items: s.items,
             favorites,
             localRecents,
-            seeAllRoute: 'catalog',
+            seeAllCollection: s.id,
           })
         )
         .join('')}

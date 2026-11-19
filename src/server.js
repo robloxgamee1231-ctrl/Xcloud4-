@@ -68,6 +68,9 @@ function sendJson(res, status, obj) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
   });
   res.end(payload);
 }
@@ -109,7 +112,7 @@ export async function createAppServer(options = {}) {
   const metaCache = new Map();
   let siglCache = { ts: 0, market: '', locale: '', lists: null };
   let activeDeviceLogin = null;
-  const activeSessions = new Map(); // sessionId -> { baseUri, titleId, demoMode, createdAt, status }
+  const activeSessions = new Map(); // sessionId -> { baseUri, titleId, createdAt, status }
 
   async function loadPublicCatalogData(market, locale) {
     const cacheValid =
@@ -188,7 +191,7 @@ export async function createAppServer(options = {}) {
       null;
 
     store.state.auth = {
-      demoMode: false,
+      provider: 'xbox',
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token || '',
       expiresAt: Date.now() + Number(tokens.expires_in || 3600) * 1000,
@@ -221,7 +224,6 @@ export async function createAppServer(options = {}) {
   async function ensureFreshSessionAuth() {
     const auth = store.state.auth;
     if (!auth) throw Object.assign(new Error('Not signed in'), { httpStatus: 401 });
-    if (auth.demoMode) return auth;
     if (Date.now() < (auth.gsExpiresAt || 0) - 60_000) return auth;
     if (!auth.refreshToken) throw Object.assign(new Error('Session expired'), { httpStatus: 401 });
     const refreshed = await refreshOAuthToken(auth.refreshToken, OAUTH_CONFIG.clientIdRef);
@@ -232,6 +234,16 @@ export async function createAppServer(options = {}) {
   async function handleApi(req, res, url) {
     const pathname = url.pathname;
     const method = req.method;
+
+    if (method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      });
+      res.end();
+      return;
+    }
 
     // Health check
     if (method === 'GET' && pathname === '/api/health') {
@@ -407,49 +419,6 @@ export async function createAppServer(options = {}) {
       }
     }
 
-    // Auth: explicit Sandbox Demo Sign-In (for inspecting signed-in flows when Microsoft egress is restricted)
-    if (method === 'POST' && pathname === '/api/auth/demo') {
-      const body = await readJsonBody(req);
-      const gamertag = typeof body.gamertag === 'string' && body.gamertag.trim()
-        ? body.gamertag.trim().slice(0, 24)
-        : 'XCloud4Preview';
-      const prefServer = store.state.settings.public.serverName;
-      const activeRegion =
-        FALLBACK_REGIONS.find((r) => r.name === prefServer) ||
-        FALLBACK_REGIONS.find((r) => r.isDefault) ||
-        FALLBACK_REGIONS[0];
-
-      store.state.auth = {
-        demoMode: true,
-        gamertag,
-        uhs: 'demo-sandbox',
-        offeringId: 'xgpuweb',
-        regions: FALLBACK_REGIONS,
-        activeRegion,
-        expiresAt: Date.now() + 86400_000,
-        gsExpiresAt: Date.now() + 86400_000,
-        cloudTime: {
-          available: true,
-          kind: 'account',
-          remainingSeconds: 54 * 60,
-          maxSeconds: 60 * 60,
-          unlimited: false,
-        },
-      };
-      // Seed one sample recent if empty so Home Continue/Recents showcases immediately
-      if (Object.keys(store.state.localRecents).length === 0) {
-        store.state.localRecents['9PP5G1F0C2B6'] = {
-          productId: '9PP5G1F0C2B6',
-          titleId: 'HaloInfinite',
-          title: 'Halo Infinite',
-          playTimeSec: 2760,
-          lastPlayedAt: Date.now() - 3600_000 * 5,
-        };
-      }
-      await store.save();
-      return sendJson(res, 200, { ok: true, auth: store.getSanitizedAuth() });
-    }
-
     // Auth: Logout / Forget
     if (method === 'POST' && pathname === '/api/auth/logout') {
       const body = await readJsonBody(req);
@@ -479,12 +448,12 @@ export async function createAppServer(options = {}) {
     if (method === 'GET' && pathname === '/api/catalog') {
       const { market, locale } = normalizeLocaleMarket(store.state.settings.public.language);
       const q = url.searchParams.get('q') || '';
-      if (!store.state.auth || store.state.auth.demoMode) {
+      if (!store.state.auth || !store.state.auth.gsToken) {
         const pub = await loadPublicCatalogData(market, locale);
         const items = filterCatalogQuery(Object.values(pub.metadata || {}), q);
         return sendJson(res, 200, {
           items,
-          source: pub.source || (store.state.auth?.demoMode ? 'sandbox-demo' : 'public-preview'),
+          source: pub.source || 'public-catalog',
           signedIn: Boolean(store.state.auth),
         });
       }
@@ -533,11 +502,11 @@ export async function createAppServer(options = {}) {
     // MRU Recents + Local Recents merged
     if (method === 'GET' && pathname === '/api/catalog/recents') {
       const localList = Object.values(store.state.localRecents).sort((a, b) => (b.lastPlayedAt || 0) - (a.lastPlayedAt || 0));
-      if (!store.state.auth || store.state.auth.demoMode) {
+      if (!store.state.auth || !store.state.auth.gsToken) {
         return sendJson(res, 200, {
           mru: localList.map((r) => r.productId),
           localRecents: store.state.localRecents,
-          source: store.state.auth?.demoMode ? 'sandbox-demo' : 'local',
+          source: 'local',
         });
       }
       try {
@@ -625,10 +594,7 @@ export async function createAppServer(options = {}) {
 
     // Cloud Time quota refresh
     if (method === 'GET' && pathname === '/api/account/cloud-time') {
-      if (!store.state.auth) return sendJson(res, 401, { error: 'Not signed in' });
-      if (store.state.auth.demoMode) {
-        return sendJson(res, 200, { cloudTime: store.state.auth.cloudTime, demoMode: true });
-      }
+      if (!store.state.auth || !store.state.auth.xblToken) return sendJson(res, 401, { error: 'Not signed in' });
       try {
         const auth = await ensureFreshSessionAuth();
         const { market } = normalizeLocaleMarket(store.state.settings.public.language);
@@ -648,13 +614,12 @@ export async function createAppServer(options = {}) {
       const results = await Promise.all(
         regions.map(async (r) => {
           const host = r.networkTestHostname || r.baseUri;
-          const rttMs = store.state.auth?.demoMode ? null : await probeHostRttMs(host, 1800);
+          const rttMs = await probeHostRttMs(host, 1800);
           return {
             name: r.name,
             continent: r.continent,
             isDefault: Boolean(r.isDefault),
-            rttMs: rttMs ?? (r.simLatencyMs || null),
-            simulated: rttMs === null && Boolean(r.simLatencyMs),
+            rttMs,
           };
         })
       );
@@ -666,28 +631,10 @@ export async function createAppServer(options = {}) {
       const body = await readJsonBody(req);
       const titleId = String(body.titleId || '');
       if (!isValidTitleId(titleId)) return sendJson(res, 400, { error: 'Invalid titleId' });
-      if (!store.state.auth) return sendJson(res, 401, { error: 'Sign in required' });
+      if (!store.state.auth || !store.state.auth.gsToken) return sendJson(res, 401, { error: 'Sign in required' });
 
       const profile = resolveStreamProfile(store.state.settings);
       const { locale } = normalizeLocaleMarket(store.state.settings.public.language);
-
-      if (store.state.auth.demoMode) {
-        const sid = `demo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-        activeSessions.set(sid, {
-          sessionId: sid,
-          titleId,
-          demoMode: true,
-          createdAt: Date.now(),
-          profile,
-        });
-        return sendJson(res, 200, {
-          ok: true,
-          demoMode: true,
-          sessionId: sid,
-          state: 'Provisioned',
-          profile,
-        });
-      }
 
       try {
         const auth = await ensureFreshSessionAuth();
@@ -711,11 +658,10 @@ export async function createAppServer(options = {}) {
           sessionId,
           titleId,
           baseUri,
-          demoMode: false,
           createdAt: Date.now(),
           profile,
         });
-        return sendJson(res, 200, { ok: true, demoMode: false, sessionId, profile });
+        return sendJson(res, 200, { ok: true, sessionId, profile });
       } catch (err) {
         return sendJson(res, err.httpStatus || 502, { ok: false, error: err.message });
       }
@@ -725,7 +671,6 @@ export async function createAppServer(options = {}) {
     if (method === 'GET' && pathname.startsWith('/api/session/waittime/')) {
       const titleId = pathname.slice('/api/session/waittime/'.length);
       if (!isValidTitleId(titleId)) return sendJson(res, 400, { error: 'Invalid titleId' });
-      if (store.state.auth?.demoMode) return sendJson(res, 200, { estimatedTotalWaitTimeInSeconds: 0 });
       try {
         const auth = await ensureFreshSessionAuth();
         const baseUri = getActiveRegionBaseUri();
@@ -744,19 +689,6 @@ export async function createAppServer(options = {}) {
       if (!isValidSessionId(sessionId)) return sendJson(res, 400, { error: 'Invalid sessionId' });
       const sess = activeSessions.get(sessionId);
       if (!sess) return sendJson(res, 404, { error: 'Unknown session' });
-
-      if (sess.demoMode) {
-        if (method === 'DELETE' && !sub) {
-          activeSessions.delete(sessionId);
-          return sendJson(res, 200, { ok: true });
-        }
-        return sendJson(res, 200, {
-          ok: true,
-          demoMode: true,
-          state: 'Provisioned',
-          exchangeResponse: { sdp: '', candidates: [] },
-        });
-      }
 
       try {
         const auth = await ensureFreshSessionAuth();

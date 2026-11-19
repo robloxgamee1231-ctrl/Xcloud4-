@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Main XCloud4 UI 2.0 Browser Application Shell & Router. */
+/* Main XCloud4 UI 2.0 Browser Application Shell & play.xbox.com-styled HUD Router. */
 
 import { api } from './api.js';
-import { appUrl } from './paths.js';
+import { appUrl, getRelayUrl, setRelayUrl } from './paths.js';
 import { buildPlayXboxUrl } from './xbox-catalog.js';
 import { initI18n, setLanguage, setIdentityVersions, t, w } from './i18n.js';
 import { icon, brandWordmark } from './icons.js';
@@ -23,23 +23,18 @@ import { renderSupportView } from './views/support.js';
 import { renderAboutView } from './views/about.js';
 import { launchGameStream } from './views/loading-stream.js';
 
-const SIDEBAR_MAIN = [
+const HUD_NAV = [
   { id: 'home', icon: 'home', labelKey: 'X4_TR_APPLE_HOME' },
   { id: 'discover', icon: 'world', labelKey: 'X4_TR_DISCOVER' },
   { id: 'catalog', icon: 'device-desktop', labelKey: 'X4_TR_CATALOG_TITLE' },
   { id: 'my-games', icon: 'device-gamepad', labelKey: 'X4_TR_U49_MY_GAMES' },
-  { id: 'search', icon: 'search', labelKey: 'X4_TR_U49_SEARCH_LABEL' },
-  { id: 'settings', icon: 'settings', labelKey: 'X4_TR_U49_SETTINGS' },
-];
-
-const SIDEBAR_FOOTER = [
-  { id: 'support', icon: 'heart', labelKey: 'X4_TR_U49_SUPPORT_TITLE' },
-  { id: 'about', icon: 'info-circle', labelKey: 'X4_TR_U49_ABOUT_TITLE' },
+  { id: 'fortnite', icon: 'play', label: 'Fortnite', freeBadge: true },
 ];
 
 const state = {
   route: 'home',
   history: [],
+  heroIndex: 0,
   selectedProductId: null,
   selectedProductDetail: null,
   auth: { signedIn: false },
@@ -51,12 +46,12 @@ const state = {
   accessCountries: [],
   serverPings: [],
   catalogItems: [],
-  catalogSource: 'sandbox-fallback',
+  catalogSource: 'offline-fallback',
   publicLists: { free: [], new: [], popular: [], leaving: [] },
   favorites: [],
   myGames: [],
   localRecents: {},
-  catalogFilter: { genre: 'ALL', access: 'all', sort: 'featured', page: 1 },
+  catalogFilter: { collection: 'all', genre: 'ALL', access: 'all', sort: 'featured', page: 1 },
   myGamesFilter: { tab: 'favorites', sort: 'recent' },
   searchQuery: '',
   searchShowAll: false,
@@ -68,10 +63,25 @@ const state = {
 const keyboardDriver = new KeyboardGamepadDriver();
 let devicePollTimer = 0;
 let clockTimer = 0;
+let connectedPadCount = 0;
 
 function formatClock() {
   const d = new Date();
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function preserveFocusRender() {
+  const activeId = document.activeElement?.id;
+  const isSearchFocus = activeId === 'x4SearchInput' || activeId === 'x4HudSearchInput';
+  const selStart = isSearchFocus ? document.activeElement.selectionStart : null;
+  renderShell();
+  if (isSearchFocus) {
+    const again = document.getElementById(activeId);
+    if (again) {
+      again.focus();
+      if (selStart !== null) again.setSelectionRange(selStart, selStart);
+    }
+  }
 }
 
 async function syncStateFromBackend() {
@@ -121,17 +131,7 @@ async function refreshCatalogData() {
       if (nextItems.length >= state.catalogItems.length) {
         state.catalogItems = nextItems;
         if (!document.getElementById('x4StreamOverlay') && !document.getElementById('x4ModalOverlay')) {
-          const searchEl = document.getElementById('x4SearchInput');
-          const hadSearchFocus = Boolean(searchEl && document.activeElement === searchEl);
-          const selStart = hadSearchFocus ? searchEl.selectionStart : null;
-          renderShell();
-          if (hadSearchFocus) {
-            const again = document.getElementById('x4SearchInput');
-            if (again) {
-              again.focus();
-              if (selStart !== null) again.setSelectionRange(selStart, selStart);
-            }
-          }
+          preserveFocusRender();
         }
       }
     }).catch(() => {});
@@ -164,11 +164,16 @@ function checkCloudTimeAlerts() {
   }
 }
 
+function padChipLabel(count) {
+  return count > 0 ? `P${count} Ready` : 'KB / Touch';
+}
+
 function renderShell() {
   const root = document.getElementById('app');
   const isLab = Boolean(state.settings?.lab?.enabled);
-  const avatarLetter = state.auth?.signedIn ? (state.auth.gamertag || 'X')[0].toUpperCase() : '?';
+  const avatarLetter = state.auth?.signedIn ? (state.auth.gamertag || 'X')[0].toUpperCase() : '';
   const qualityBadge = isLab ? state.activeProfile?.label || '1080p-HQ' : (state.settings?.public?.quality || '1080p-hq').toUpperCase();
+  const serverBadge = state.settings?.public?.serverName || 'Auto';
 
   let pageHtml = '';
   if (state.route === 'home') pageHtml = renderHomeView(state);
@@ -187,63 +192,93 @@ function renderShell() {
   else if (state.route === 'support') pageHtml = renderSupportView();
   else if (state.route === 'about') pageHtml = renderAboutView(state);
 
-  const navBtn = (item) => `
-    <button class="x4-nav-item ${state.route === item.id ? 'is-active' : ''} x4-focusable"
+  const hudNavBtn = (item) => `
+    <button class="x4-hud-link ${state.route === item.id ? 'is-active' : ''} x4-focusable"
       data-action="navigate" data-route="${item.id}" type="button">
       ${icon(item.icon)}
-      <span>${t(item.labelKey)}</span>
+      <span>${item.label ? escapeHtml(item.label) : t(item.labelKey)}</span>
+      ${item.freeBadge ? `<span class="x4-hud-free-dot">FREE</span>` : ''}
     </button>`;
 
   root.innerHTML = `
     <div class="x4-shell ${isLab ? 'is-lab-mode' : ''}">
-      <aside class="x4-sidebar" aria-label="Primary Navigation">
-        <div class="x4-sidebar-top">
-          <button class="x4-brand-btn x4-focusable" data-action="navigate" data-route="home" type="button">
+      <header class="x4-hud-bar" aria-label="Xbox Cloud HUD">
+        <div class="x4-hud-left">
+          <button class="x4-brand-btn x4-focusable" data-action="navigate" data-route="home" type="button" title="XCloud4 Home">
             ${brandWordmark(true)}
             ${isLab ? `<span class="x4-lab-pill">${w('labBadge')}</span>` : ''}
           </button>
+
+          <nav class="x4-hud-nav" aria-label="Primary Navigation">
+            ${HUD_NAV.map(hudNavBtn).join('')}
+          </nav>
         </div>
 
-        <nav class="x4-nav-group">
-          ${SIDEBAR_MAIN.map(navBtn).join('')}
-        </nav>
+        <div class="x4-hud-center">
+          <div class="x4-hud-search">
+            ${icon('search')}
+            <input id="x4HudSearchInput" class="x4-hud-search-input x4-focusable" type="search"
+              value="${escapeHtml(state.searchQuery)}"
+              placeholder="${escapeHtml(w('searchPlaceholder'))}" autocomplete="off" aria-label="Search games" />
+            <kbd class="x4-hud-kbd">/</kbd>
+          </div>
+        </div>
 
-        <div class="x4-sidebar-divider"></div>
-
-        <nav class="x4-nav-group">
-          ${SIDEBAR_FOOTER.map(navBtn).join('')}
-          <button class="x4-nav-item x4-nav-lab ${isLab ? 'is-lab-on' : ''} x4-focusable" data-action="toggle-lab" type="button">
-            ${icon('flask')}
-            <span>${w('labToggle')}</span>
-            <span class="x4-lab-status-dot ${isLab ? 'is-on' : ''}"></span>
+        <div class="x4-hud-right">
+          <button id="x4HudPadChip" class="x4-hud-pill ${connectedPadCount > 0 ? 'is-pad-ready' : ''} x4-focusable"
+            data-action="open-controllers" type="button" title="Controller Status">
+            ${icon('device-gamepad')}
+            <span>${padChipLabel(connectedPadCount)}</span>
           </button>
-        </nav>
 
-        <div class="x4-sidebar-footer">
-          <div class="x4-version-tag">v${isLab ? '0.7.111-lab' : '1.3.0-beta'}</div>
+          <button class="x4-hud-pill x4-hide-sm x4-focusable" data-action="navigate" data-route="settings" type="button" title="Stream Region & Quality">
+            ${icon('wifi')}
+            <span>${escapeHtml(serverBadge)} · ${escapeHtml(qualityBadge)}</span>
+          </button>
+
+          <button class="x4-hud-icon-btn ${isLab ? 'is-lab-on' : ''} x4-focusable"
+            data-action="toggle-lab" type="button" title="${escapeHtml(w('labToggle'))} (F9)">
+            ${icon('flask')}
+          </button>
+
+          <button class="x4-hud-icon-btn ${state.route === 'settings' ? 'is-active' : ''} x4-focusable"
+            data-action="navigate" data-route="settings" type="button" title="${escapeHtml(t('X4_TR_U49_SETTINGS'))}">
+            ${icon('settings')}
+          </button>
+
+          <span class="x4-cap-clock x4-hide-md" id="x4TopClock">${formatClock()}</span>
+
+          ${
+            state.auth?.signedIn
+              ? `<button class="x4-hud-profile is-signed-in x4-focusable" data-action="navigate" data-route="account" type="button" title="${escapeHtml(state.auth.gamertag)}">
+                   <span class="x4-hud-avatar">${escapeHtml(avatarLetter)}<span class="x4-online-dot is-online"></span></span>
+                   <span class="x4-hud-gamertag">${escapeHtml(state.auth.gamertag)}</span>
+                 </button>`
+              : `<button class="x4-hud-signin x4-focusable" data-action="navigate" data-route="account" type="button">
+                   ${icon('user')} <span>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</span>
+                 </button>`
+          }
         </div>
-      </aside>
+      </header>
 
-      <div class="x4-main-col">
-        <header class="x4-topbar">
-          <div class="x4-topbar-left">
-            <span class="x4-hints-bar">${w('keyboardHint')}</span>
-          </div>
-          <div class="x4-status-capsule">
-            <span class="x4-cap-item" title="Network">${icon('wifi')}</span>
-            <span class="x4-cap-badge">${escapeHtml(qualityBadge)}</span>
-            <span class="x4-cap-clock" id="x4TopClock">${formatClock()}</span>
-            <button class="x4-cap-avatar x4-focusable" data-action="navigate" data-route="account" type="button" title="${escapeHtml(state.auth?.gamertag || t('X4_TR_U49_ACCOUNT_SIGN_IN'))}">
-              <span>${escapeHtml(avatarLetter)}</span>
-              <span class="x4-online-dot ${state.auth?.signedIn ? 'is-online' : ''}"></span>
-            </button>
-          </div>
-        </header>
+      <main class="x4-content" id="x4MainContent">
+        ${pageHtml}
 
-        <main class="x4-content" id="x4MainContent">
-          ${pageHtml}
-        </main>
-      </div>
+        <footer class="x4-app-footer">
+          <div class="x4-footer-left">
+            <strong>XCloud4</strong>
+            <span>v${isLab ? '0.7.111-lab' : '1.3.0-beta'}</span>
+            <span>·</span>
+            <a href="https://www.xbox.com/play" target="_blank" rel="noopener noreferrer">play.xbox.com</a>
+          </div>
+          <div class="x4-footer-links">
+            <button class="x4-footer-link x4-focusable" data-action="navigate" data-route="account" type="button">${t('X4_TR_U49_ACCOUNT_TITLE')}</button>
+            <button class="x4-footer-link x4-focusable" data-action="navigate" data-route="settings" type="button">${t('X4_TR_U49_SETTINGS')}</button>
+            <button class="x4-footer-link x4-focusable" data-action="navigate" data-route="about" type="button">${t('X4_TR_U49_ABOUT_TITLE')}</button>
+            <button class="x4-footer-link x4-focusable" data-action="navigate" data-route="support" type="button">${t('X4_TR_U49_SUPPORT_TITLE')}</button>
+          </div>
+        </footer>
+      </main>
     </div>
   `;
 
@@ -300,6 +335,8 @@ async function openGamePage(productId) {
   state.selectedProductDetail = state.catalogItems.find((i) => i.productId === productId) || null;
   state.route = 'game';
   renderShell();
+  const main = document.getElementById('x4MainContent');
+  if (main) main.scrollTop = 0;
   try {
     const res = await api.getProductDetails(productId);
     if (res?.item && state.selectedProductId === productId) {
@@ -363,15 +400,19 @@ async function startDeviceLoginFlow() {
           state.auth = polled.auth;
           await refreshCatalogData();
           checkCloudTimeAlerts();
+          showToast(`Signed in as ${state.auth?.gamertag || 'Xbox Player'}`, 'ok');
           renderShell();
         }
-      } catch {
+      } catch (err) {
         clearInterval(devicePollTimer);
+        state.deviceLogin = null;
+        showToast(err.message || 'Sign-in failed', 'danger');
+        renderShell();
       }
     }, (res.interval || 5) * 1000);
   } catch (err) {
-    if (err.payload?.sandboxUnavailable) {
-      state.deviceLogin = { sandboxUnavailable: true };
+    if (err.payload?.oauthUnavailable || err.payload?.networkUnavailable) {
+      state.deviceLogin = { oauthUnavailable: true, error: err.message };
       renderShell();
     } else {
       showToast(err.message, 'danger');
@@ -399,6 +440,27 @@ async function startPlayTitle(productId) {
 }
 
 function bindViewInputs() {
+  const hudSearch = document.getElementById('x4HudSearchInput');
+  if (hudSearch) {
+    hudSearch.addEventListener('input', (e) => {
+      const pos = e.target.selectionStart;
+      state.searchQuery = e.target.value;
+      state.searchShowAll = false;
+      if (state.route !== 'search') state.route = 'search';
+      renderShell();
+      const again = document.getElementById('x4HudSearchInput');
+      if (again) {
+        again.focus();
+        again.setSelectionRange(pos, pos);
+      }
+    });
+    hudSearch.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && state.route !== 'search') {
+        navigateTo('search');
+      }
+    });
+  }
+
   const genreEl = document.getElementById('x4CatGenre');
   if (genreEl) {
     genreEl.addEventListener('change', (e) => {
@@ -447,13 +509,81 @@ function bindViewInputs() {
 }
 
 async function handleDelegatedClick(e) {
+  // Record play.xbox.com launch into Jump Back In without blocking navigation
+  const playXboxLink = e.target.closest('a[data-play-xbox]');
+  if (playXboxLink) {
+    const pid = playXboxLink.getAttribute('data-play-xbox');
+    const item = state.catalogItems.find((i) => i.productId === pid) || state.selectedProductDetail;
+    if (pid) {
+      api.recordPlayTime(pid, item?.titleId || pid, item?.title || pid, 0)
+        .then((res) => {
+          if (res?.localRecents) state.localRecents = res.localRecents;
+        })
+        .catch(() => {});
+    }
+    return;
+  }
+
   const target = e.target.closest('button, [data-action]');
   if (!target) return;
+
+  // Shelf horizontal scroll buttons
+  if (target.dataset.shelfScroll) {
+    const dir = Number(target.dataset.shelfScroll);
+    const id = target.dataset.shelfId;
+    const track = document.querySelector(`[data-shelf-track="${id}"]`);
+    if (track) {
+      const step = Math.max(280, Math.round(track.clientWidth * 0.78));
+      track.scrollBy({ left: dir * step, behavior: 'smooth' });
+    }
+    return;
+  }
+
+  // Hero spotlight controls
+  if (target.dataset.heroStep) {
+    state.heroIndex += Number(target.dataset.heroStep);
+    renderShell();
+    return;
+  }
+  if (target.dataset.heroIdx !== undefined) {
+    state.heroIndex = Number(target.dataset.heroIdx);
+    renderShell();
+    return;
+  }
+
+  // Collection pills inside catalog
+  if (target.dataset.catCollection) {
+    state.catalogFilter.collection = target.dataset.catCollection;
+    state.catalogFilter.page = 1;
+    renderShell();
+    return;
+  }
 
   const action = target.dataset.action;
   if (action === 'navigate') {
     const route = target.dataset.route;
     if (route) navigateTo(route);
+    return;
+  }
+  if (action === 'open-controllers') {
+    state.settingsSection = 'controllers';
+    navigateTo('settings');
+    return;
+  }
+  if (action === 'browse-collection') {
+    state.catalogFilter.collection = target.dataset.collection || 'all';
+    state.catalogFilter.genre = 'ALL';
+    state.catalogFilter.access = target.dataset.collection === 'free' ? 'free' : 'all';
+    state.catalogFilter.page = 1;
+    navigateTo('catalog');
+    return;
+  }
+  if (action === 'browse-genre') {
+    state.catalogFilter.collection = 'all';
+    state.catalogFilter.genre = target.dataset.genre || 'ALL';
+    state.catalogFilter.access = 'all';
+    state.catalogFilter.page = 1;
+    navigateTo('catalog');
     return;
   }
   if (action === 'back') {
@@ -476,27 +606,27 @@ async function handleDelegatedClick(e) {
     if (pid) startPlayTitle(pid);
     return;
   }
-  if (action === 'demo-signin') {
-    const tagInput = document.getElementById('x4DemoTagInput');
-    const res = await api.demoSignIn(tagInput?.value || 'XCloud4Preview');
-    state.auth = res.auth;
-    state.deviceLogin = null;
-    await syncStateFromBackend();
-    await refreshCatalogData();
-    checkCloudTimeAlerts();
-    if (state.route === 'account') navigateTo('home');
-    else renderShell();
-    showToast('Sandbox Demo session active', 'ok');
+  if (action === 'save-relay') {
+    const input = document.getElementById('x4RelayInput');
+    try {
+      const saved = setRelayUrl(input?.value || '');
+      state.serverPings = [];
+      await syncStateFromBackend();
+      await refreshCatalogData();
+      renderShell();
+      showToast(saved ? `Relay connected: ${saved}` : 'Relay cleared (play.xbox.com mode)', 'ok');
+    } catch (err) {
+      showToast(err.message, 'danger');
+    }
     return;
   }
-  if (action === 'demo-play') {
-    const pid = target.dataset.productId;
-    if (!state.auth.signedIn) {
-      const res = await api.demoSignIn('XCloud4Preview');
-      state.auth = res.auth;
-      await syncStateFromBackend();
-    }
-    if (pid) startPlayTitle(pid);
+  if (action === 'clear-relay') {
+    setRelayUrl('');
+    state.serverPings = [];
+    await syncStateFromBackend();
+    await refreshCatalogData();
+    renderShell();
+    showToast('Relay disconnected (play.xbox.com mode)', 'ok');
     return;
   }
   if (action === 'toggle-lab') {
@@ -837,13 +967,24 @@ function moveGamepadFocus(dir) {
   }
 }
 
-// Global keyboard shortcuts (F9 Lab toggle, Esc back/modal close) + Gamepad UI navigation
+// Global keyboard shortcuts (F9 Lab toggle, / Focus Search, Esc back/modal close) + Gamepad UI navigation
 function setupGlobalInput() {
   keyboardDriver.attach();
   document.addEventListener('click', handleDelegatedClick);
 
   window.addEventListener('keydown', (e) => {
     if (document.getElementById('x4StreamOverlay')) return;
+    const tag = document.activeElement?.tagName;
+    const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+    if (e.key === '/' && !typing) {
+      const hudSearch = document.getElementById('x4HudSearchInput');
+      if (hudSearch) {
+        e.preventDefault();
+        hudSearch.focus();
+        return;
+      }
+    }
     if (e.code === 'F9') {
       e.preventDefault();
       toggleLabMode();
@@ -859,13 +1000,24 @@ function setupGlobalInput() {
     }
   });
 
-  // Live controller inspector + Gamepad UI 2.0 spatial navigation + R3 Lab toggle
+  // Live controller HUD indicator + Gamepad UI 2.0 spatial navigation + R3 Lab toggle
   let prevButtons = 0;
   let navCooldownUntil = 0;
   setInterval(() => {
     if (document.getElementById('x4StreamOverlay')) return;
     const rawPads = navigator.getGamepads ? Array.from(navigator.getGamepads()) : [];
-    const p0 = readBrowserGamepad(rawPads[0]);
+    const connected = rawPads.map(readBrowserGamepad).filter(Boolean);
+    if (connected.length !== connectedPadCount) {
+      connectedPadCount = connected.length;
+      const chip = document.getElementById('x4HudPadChip');
+      if (chip) {
+        chip.classList.toggle('is-pad-ready', connectedPadCount > 0);
+        const span = chip.querySelector('span');
+        if (span) span.textContent = padChipLabel(connectedPadCount);
+      }
+    }
+
+    const p0 = connected[0];
     if (p0) {
       const btns = p0.buttons;
       const justPressed = (mask) => Boolean(btns & mask) && !(prevButtons & mask);
@@ -901,7 +1053,6 @@ function setupGlobalInput() {
     }
     if (state.route === 'settings' && state.settingsSection === 'controllers') {
       const insp = document.getElementById('x4PadsInspector');
-      const connected = rawPads.map(readBrowserGamepad).filter(Boolean);
       if (insp && connected.length > 0) {
         insp.innerHTML = connected
           .map(
