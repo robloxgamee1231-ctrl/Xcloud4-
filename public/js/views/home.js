@@ -4,10 +4,11 @@
 import { t, w } from '../i18n.js';
 import { icon } from '../icons.js';
 import { appUrl, artworkUrl } from '../paths.js';
+import { buildPlayXboxUrl } from '../xbox-catalog.js';
 import { escapeHtml, formatPlayTime, formatRelativeTime, renderShelfSection } from './cards.js';
 
 export function renderHomeView(state) {
-  const { auth, catalogItems, publicLists, favorites, myGames, localRecents } = state;
+  const { auth, catalogItems, publicLists, favorites, myGames, localRecents, catalogSource } = state;
   const byId = new Map(catalogItems.map((i) => [i.productId, i]));
 
   const recentIds = Object.values(localRecents || {})
@@ -18,9 +19,14 @@ export function renderHomeView(state) {
   const continueId = recentIds[0] || null;
   const continueItem = continueId ? byId.get(continueId) : null;
   const fortniteItem = byId.get('BT5P2X999VH2') || catalogItems.find((i) => i.freeToPlay);
+  const featuredItem =
+    (publicLists?.popular || []).map((id) => byId.get(id)).find(Boolean) ||
+    catalogItems.find((i) => i.productId !== 'BT5P2X999VH2') ||
+    fortniteItem;
 
-  const mapIds = (ids) => (ids || []).map((id) => byId.get(id)).filter(Boolean).slice(0, 12);
+  const mapIds = (ids) => (ids || []).map((id) => byId.get(id)).filter(Boolean).slice(0, 14);
   const myGameItems = [...new Set([...favorites, ...myGames, ...recentIds])].map((id) => byId.get(id)).filter(Boolean);
+  const isLiveCatalog = catalogSource === 'live' || catalogSource === 'live-snapshot';
 
   const countLabel =
     catalogItems.length === 1
@@ -29,29 +35,33 @@ export function renderHomeView(state) {
 
   let heroHtml = '';
   if (!auth.signedIn) {
+    const heroBgUrl = featuredItem?.heroUrl || featuredItem?.coverUrl || appUrl('assets/branding/pic1.png');
+    const featuredPlayUrl = featuredItem ? (featuredItem.playUrl || buildPlayXboxUrl(featuredItem.productId, featuredItem.title)) : 'https://www.xbox.com/play';
     heroHtml = `
       <div class="x4-hero-card x4-hero-signin">
-        <div class="x4-hero-bg" style="background-image:url('${appUrl('assets/branding/pic1.png')}')"></div>
+        <div class="x4-hero-bg" style="background-image:url('${escapeHtml(heroBgUrl)}')"></div>
         <div class="x4-hero-scrim"></div>
         <div class="x4-hero-content">
-          <span class="x4-pill is-accent">${countLabel}</span>
-          <h1>${t('X4_TR_U49_HOME_SIGN_IN_TITLE')}</h1>
-          <p>${t('X4_TR_U49_HOME_SIGN_IN_SUBTITLE')}</p>
+          <span class="x4-pill is-accent">${escapeHtml(countLabel)}${isLiveCatalog ? ` · ${escapeHtml(w('liveCatalogBadge'))}` : ''}</span>
+          <h1>${featuredItem ? escapeHtml(featuredItem.title) : t('X4_TR_U49_HOME_SIGN_IN_TITLE')}</h1>
+          <p>${featuredItem?.shortDescription ? escapeHtml(featuredItem.shortDescription) : t('X4_TR_U49_HOME_SIGN_IN_SUBTITLE')}</p>
           <div class="x4-hero-actions">
-            <button class="x4-btn is-primary x4-focusable" data-action="navigate" data-route="account" type="button">
+            <a class="x4-btn is-primary x4-focusable" href="${escapeHtml(featuredPlayUrl)}" target="_blank" rel="noopener noreferrer">
+              ${icon('play')} <span>${w('playOnXbox')}</span>
+            </a>
+            <button class="x4-btn is-secondary x4-focusable" data-action="navigate" data-route="catalog" type="button">
+              ${icon('device-desktop')} <span>${t('X4_TR_U49_HOME_EXPLORE_CATALOG')}</span>
+            </button>
+            <button class="x4-btn is-ghost x4-focusable" data-action="navigate" data-route="account" type="button">
               ${icon('user')} <span>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</span>
-            </button>
-            <button class="x4-btn is-secondary x4-focusable" data-action="demo-signin" type="button">
-              ${icon('play')} <span>${w('demoModeBtn')}</span>
-            </button>
-            <button class="x4-btn is-ghost x4-focusable" data-action="navigate" data-route="discover" type="button">
-              <span>${t('X4_TR_U49_HOME_EXPLORE_CATALOG')}</span>
             </button>
           </div>
         </div>
       </div>`;
   } else if (continueItem) {
     const rec = localRecents[continueItem.productId];
+    const contPlayUrl = continueItem.playUrl || buildPlayXboxUrl(continueItem.productId, continueItem.title);
+    const liveStreamReady = !auth.demoMode;
     heroHtml = `
       <div class="x4-hero-card">
         <div class="x4-hero-bg" style="background-image:url('${escapeHtml(continueItem.heroUrl || continueItem.coverUrl || artworkUrl(continueItem.productId, 'hero.svg'))}')"></div>
@@ -61,10 +71,19 @@ export function renderHomeView(state) {
           <h1>${escapeHtml(continueItem.title)}</h1>
           <p>${escapeHtml(continueItem.shortDescription || '')}</p>
           <div class="x4-hero-actions">
-            <button class="x4-btn is-primary x4-focusable" data-action="play-game" data-product-id="${escapeHtml(continueItem.productId)}" type="button">
-              ${icon('play')} <span>${t('X4_TR_U49_HOME_CONTINUE')}</span>
-            </button>
-            <button class="x4-btn is-secondary x4-focusable" data-action="open-game" data-product-id="${escapeHtml(continueItem.productId)}" type="button">
+            ${
+              liveStreamReady
+                ? `<button class="x4-btn is-primary x4-focusable" data-action="play-game" data-product-id="${escapeHtml(continueItem.productId)}" type="button">
+                     ${icon('play')} <span>${t('X4_TR_U49_HOME_CONTINUE')}</span>
+                   </button>`
+                : `<a class="x4-btn is-primary x4-focusable" href="${escapeHtml(contPlayUrl)}" target="_blank" rel="noopener noreferrer">
+                     ${icon('play')} <span>${w('playOnXbox')}</span>
+                   </a>
+                   <button class="x4-btn is-secondary x4-focusable" data-action="play-game" data-product-id="${escapeHtml(continueItem.productId)}" type="button">
+                     ${icon('device-gamepad')} <span>${w('streamPreviewBtn')}</span>
+                   </button>`
+            }
+            <button class="x4-btn is-ghost x4-focusable" data-action="open-game" data-product-id="${escapeHtml(continueItem.productId)}" type="button">
               <span>${t('X4_TR_U49_VIEW_GAME_SHORT')}</span>
             </button>
           </div>
@@ -115,9 +134,11 @@ export function renderHomeView(state) {
           <p class="x4-muted">${t('X4_TR_U49_HOME_SUBTITLE')}</p>
         </div>
         ${
-          auth.demoMode
-            ? `<span class="x4-sandbox-chip">${w('demoBadge')}</span>`
-            : ''
+          isLiveCatalog
+            ? `<span class="x4-pill is-accent">${escapeHtml(w('liveCatalogBadge'))} · ${catalogItems.length}</span>`
+            : auth.demoMode
+              ? `<span class="x4-sandbox-chip">${w('demoBadge')}</span>`
+              : ''
         }
       </div>
 
@@ -157,6 +178,15 @@ export function renderHomeView(state) {
         id: 'new',
         title: t('X4_TR_U49_SORT_NEW'),
         items: mapIds(publicLists?.new),
+        favorites,
+        localRecents,
+        seeAllRoute: 'discover',
+      })}
+
+      ${renderShelfSection({
+        id: 'leaving',
+        title: t('X4_TR_U49_COLLECTIONS') + ' · Leaving Soon',
+        items: mapIds(publicLists?.leaving),
         favorites,
         localRecents,
         seeAllRoute: 'discover',

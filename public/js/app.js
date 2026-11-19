@@ -3,6 +3,7 @@
 
 import { api } from './api.js';
 import { appUrl } from './paths.js';
+import { buildPlayXboxUrl } from './xbox-catalog.js';
 import { initI18n, setLanguage, setIdentityVersions, t, w } from './i18n.js';
 import { icon, brandWordmark } from './icons.js';
 import { KeyboardGamepadDriver, readBrowserGamepad, triggerBrowserRumble, XBOX_BUTTONS } from './input-engine.js';
@@ -50,6 +51,7 @@ const state = {
   accessCountries: [],
   serverPings: [],
   catalogItems: [],
+  catalogSource: 'sandbox-fallback',
   publicLists: { free: [], new: [], popular: [], leaving: [] },
   favorites: [],
   myGames: [],
@@ -57,6 +59,7 @@ const state = {
   catalogFilter: { genre: 'ALL', access: 'all', sort: 'featured', page: 1 },
   myGamesFilter: { tab: 'favorites', sort: 'recent' },
   searchQuery: '',
+  searchShowAll: false,
   showOsk: false,
   deviceLogin: null,
   updateCheck: null,
@@ -87,25 +90,51 @@ async function syncStateFromBackend() {
   setIdentityVersions(Boolean(state.settings.lab.enabled));
 }
 
+function mergeCatalogItems(pubMeta, catItems) {
+  const mergedMap = new Map();
+  for (const item of Object.values(pubMeta || {})) {
+    if (item?.productId) mergedMap.set(item.productId, item);
+  }
+  for (const item of catItems || []) {
+    if (item?.productId) {
+      mergedMap.set(item.productId, { ...(mergedMap.get(item.productId) || {}), ...item });
+    }
+  }
+  return Array.from(mergedMap.values());
+}
+
 async function refreshCatalogData() {
   try {
-    const [pub, cat, rec] = await Promise.all([
+    const [pub, rec] = await Promise.all([
       api.getPublicLists(),
-      api.getCatalog(),
       api.getRecents(),
     ]);
     state.publicLists = pub.lists || state.publicLists;
-    const mergedMap = new Map();
-    for (const item of Object.values(pub.metadata || {})) {
-      if (item?.productId) mergedMap.set(item.productId, item);
-    }
-    for (const item of cat.items || []) {
-      if (item?.productId) {
-        mergedMap.set(item.productId, { ...(mergedMap.get(item.productId) || {}), ...item });
-      }
-    }
-    state.catalogItems = Array.from(mergedMap.values());
+    state.catalogSource = pub.source || state.catalogSource;
+    state.catalogItems = mergeCatalogItems(pub.metadata, []);
     if (rec?.localRecents) state.localRecents = rec.localRecents;
+
+    // Background hydrate full catalog (~400+ titles) without blocking initial paint
+    api.getCatalog().then((cat) => {
+      const nextItems = mergeCatalogItems(pub.metadata, cat?.items || []);
+      if (cat?.source) state.catalogSource = cat.source;
+      if (nextItems.length >= state.catalogItems.length) {
+        state.catalogItems = nextItems;
+        if (!document.getElementById('x4StreamOverlay') && !document.getElementById('x4ModalOverlay')) {
+          const searchEl = document.getElementById('x4SearchInput');
+          const hadSearchFocus = Boolean(searchEl && document.activeElement === searchEl);
+          const selStart = hadSearchFocus ? searchEl.selectionStart : null;
+          renderShell();
+          if (hadSearchFocus) {
+            const again = document.getElementById('x4SearchInput');
+            if (again) {
+              again.focus();
+              if (selStart !== null) again.setSelectionRange(selStart, selStart);
+            }
+          }
+        }
+      }
+    }).catch(() => {});
   } catch (err) {
     console.warn('Catalog refresh error:', err);
   }
@@ -283,6 +312,7 @@ async function openGamePage(productId) {
 }
 
 async function persistSettings() {
+  const prevLang = state.settings?.public?.language;
   const res = await api.saveSettings(state.draftSettings);
   state.settings = res.settings;
   state.draftSettings = structuredClone(res.settings);
@@ -293,6 +323,10 @@ async function persistSettings() {
   setIdentityVersions(Boolean(state.settings.lab.enabled));
   showToast('Settings saved', 'ok');
   renderShell();
+  if (prevLang !== state.settings.public.language) {
+    await refreshCatalogData();
+    renderShell();
+  }
 }
 
 async function toggleLabMode() {
@@ -401,6 +435,7 @@ function bindViewInputs() {
     searchInput.addEventListener('input', (e) => {
       const pos = e.target.selectionStart;
       state.searchQuery = e.target.value;
+      state.searchShowAll = false;
       renderShell();
       const again = document.getElementById('x4SearchInput');
       if (again) {
@@ -484,7 +519,11 @@ async function handleDelegatedClick(e) {
   }
   if (action === 'store-qr') {
     const pid = target.dataset.productId;
-    const url = `https://www.xbox.com/play/games/xcloud4/${pid}`;
+    const item =
+      state.selectedProductDetail?.productId === pid
+        ? state.selectedProductDetail
+        : state.catalogItems.find((g) => g.productId === pid);
+    const url = item?.playUrl || buildPlayXboxUrl(pid, item?.title || 'game');
     showModal({
       title: w('openStoreQr'),
       bodyHtml: `<div class="x4-qr-modal-center"><div class="x4-qr-card is-lg">${generateQrSvg(url)}</div><p class="x4-muted">${escapeHtml(url)}</p></div>`,
@@ -657,6 +696,12 @@ async function handleDelegatedClick(e) {
   }
   if (target.hasAttribute('data-search-clear')) {
     state.searchQuery = '';
+    state.searchShowAll = false;
+    renderShell();
+    return;
+  }
+  if (target.hasAttribute('data-search-show-all')) {
+    state.searchShowAll = true;
     renderShell();
     return;
   }

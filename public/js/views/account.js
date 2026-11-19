@@ -39,9 +39,14 @@ export function renderAccountView(state) {
                 ? `<div class="x4-warn-box">
                      <strong>${w('demoBadge')}</strong>
                      <p>${w('demoExplain')}</p>
-                     <button class="x4-btn is-primary x4-focusable" data-action="demo-signin" type="button">
-                       ${icon('play')} <span>${w('demoModeBtn')}</span>
-                     </button>
+                     <div class="x4-account-cta-row">
+                       <a class="x4-btn is-primary x4-focusable" href="https://www.xbox.com/play" target="_blank" rel="noopener noreferrer">
+                         ${icon('world')} <span>${w('playOnXbox')}</span>
+                       </a>
+                       <button class="x4-btn is-secondary x4-focusable" data-action="demo-signin" type="button">
+                         ${icon('play')} <span>${w('demoModeBtn')}</span>
+                       </button>
+                     </div>
                    </div>`
                 : deviceLogin?.userCode
                   ? `<div class="x4-device-box">
@@ -61,7 +66,10 @@ export function renderAccountView(state) {
                        <button class="x4-btn is-primary is-lg x4-focusable" data-action="start-device-login" type="button">
                          ${icon('user')} <span>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</span>
                        </button>
-                       <button class="x4-btn is-secondary x4-focusable" data-action="demo-signin" type="button">
+                       <a class="x4-btn is-secondary x4-focusable" href="https://www.xbox.com/play" target="_blank" rel="noopener noreferrer">
+                         ${icon('world')} <span>${w('playOnXbox')}</span>
+                       </a>
+                       <button class="x4-btn is-ghost x4-focusable" data-action="demo-signin" type="button">
                          ${icon('play')} <span>${w('demoModeBtn')}</span>
                        </button>
                      </div>`

@@ -12,8 +12,10 @@ const OSK_ROWS = [
   'ZXCVBNM'.split(''),
 ];
 
+const SEARCH_RENDER_LIMIT = 60;
+
 export function renderSearchView(state) {
-  const { catalogItems, favorites, localRecents, searchQuery, showOsk } = state;
+  const { catalogItems, favorites, localRecents, searchQuery, showOsk, searchShowAll } = state;
   const favSet = new Set(favorites);
   const q = (searchQuery || '').trim().toLowerCase();
 
@@ -24,6 +26,8 @@ export function renderSearchView(state) {
       })
     : catalogItems;
 
+  const limit = searchShowAll ? matches.length : SEARCH_RENDER_LIMIT;
+  const visibleMatches = matches.slice(0, limit);
   const countText = `${matches.length} ${tCount(matches.length, 'X4_TR_U49_RESULT', 'X4_TR_U49_RESULTS')}`;
 
   return `
@@ -72,11 +76,21 @@ export function renderSearchView(state) {
       }
 
       ${
-        matches.length === 0
+        visibleMatches.length === 0
           ? `<div class="x4-empty-box"><p>${t('X4_TR_U49_NO_GAMES_IN_VIEW')}</p></div>`
           : `<div class="x4-game-grid">
-               ${matches.map((item) => renderGameCard(item, { isFav: favSet.has(item.productId), recentInfo: localRecents[item.productId] })).join('')}
-             </div>`
+               ${visibleMatches.map((item) => renderGameCard(item, { isFav: favSet.has(item.productId), recentInfo: localRecents[item.productId] })).join('')}
+             </div>
+             ${
+               matches.length > visibleMatches.length
+                 ? `<div class="x4-pagination">
+                      <span class="x4-muted">${visibleMatches.length} / ${matches.length}</span>
+                      <button class="x4-btn is-secondary x4-focusable" data-search-show-all type="button">
+                        Show all ${matches.length}
+                      </button>
+                    </div>`
+                 : ''
+             }`
       }
     </div>
   `;

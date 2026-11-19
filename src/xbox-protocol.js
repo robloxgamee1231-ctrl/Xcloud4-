@@ -2,6 +2,31 @@
 /* Xbox Cloud Gaming & Microsoft OAuth2/Store protocol module modeled on asp11edgr/XCloud4. */
 import crypto from 'node:crypto';
 import net from 'node:net';
+import {
+  SIGL_GUIDS,
+  isValidProductId,
+  normalizeLocaleMarket,
+  buildPlayXboxUrl,
+  formatStoreImageUrl,
+  parseDisplayCatalogProducts,
+  fetchSiglIds,
+  fetchSiglWithFallback,
+  fetchDisplayCatalogChunks,
+  fetchFullXboxCatalogSnapshot,
+} from '../public/js/xbox-catalog.js';
+
+export {
+  SIGL_GUIDS,
+  isValidProductId,
+  normalizeLocaleMarket,
+  buildPlayXboxUrl,
+  formatStoreImageUrl,
+  parseDisplayCatalogProducts,
+  fetchSiglIds,
+  fetchSiglWithFallback,
+  fetchDisplayCatalogChunks,
+  fetchFullXboxCatalogSnapshot,
+};
 
 export const APP_IDENTITY = {
   publicVersion: '1.3.0-beta',
@@ -31,13 +56,6 @@ export const OAUTH_CONFIG = {
   verificationUri: 'https://www.microsoft.com/link',
   fortniteTitleId: 'BT5P2X999VH2',
   xboxAccessKey: '4BDB3609-C1F1-4195-9B37-FEFF45DA8B8E',
-};
-
-export const SIGL_GUIDS = {
-  free: 'd8f4afcd-882a-49e3-86b3-f61fa0172b75',
-  new: '06323672-b8c8-43cc-b0de-32d5a9834749',
-  popular: '6a589fa0-d493-472b-8e20-3813699d7056',
-  leaving: '31ff2361-2772-4622-849b-f4f1abb4ad1b',
 };
 
 // Better xCloud MIT bypass server IP table (access_country.h)
@@ -240,25 +258,12 @@ export function isValidTitleId(titleId) {
   return typeof titleId === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(titleId);
 }
 
-export function isValidProductId(productId) {
-  return typeof productId === 'string' && /^[A-Za-z0-9]{8,16}$/.test(productId);
-}
-
 export function isAllowedStoreImageUrl(url) {
   return (
     typeof url === 'string' &&
     url.length < 512 &&
-    /^https:\/\/store-images\.s-microsoft\.com\/image\/apps\.[A-Za-z0-9._-]+(\?w=\d+&h=\d+&q=85&format=jpg)?$/.test(url)
+    /^https:\/\/store-images\.s-microsoft\.com\/image\/[A-Za-z0-9._/-]+(\?w=\d+&h=\d+&q=85&format=jpg)?$/.test(url)
   );
-}
-
-export function formatStoreImageUrl(uri, width, height) {
-  if (typeof uri !== 'string') return '';
-  let clean = uri.trim();
-  if (clean.startsWith('https:')) clean = clean.slice(6);
-  if (!clean.startsWith('//store-images.s-microsoft.com/image/apps.')) return '';
-  const stem = clean.split('?')[0];
-  return `https:${stem}?w=${width}&h=${height}&q=85&format=jpg`;
 }
 
 export function classifyRegionContinent(name) {
@@ -690,110 +695,15 @@ export async function fetchCloudMru(baseUri, gsToken, deviceInfo) {
 }
 
 export async function fetchSiglList(guid, market = 'US', locale = 'en-US') {
-  const safeMarket = /^[A-Z]{2}$/.test(market) ? market : 'US';
-  const safeLocale = /^[a-z]{2}-[A-Z]{2}$/.test(locale) ? locale : 'en-US';
-  const url = `https://catalog.gamepass.com/sigls/v2?id=${encodeURIComponent(guid)}&market=${safeMarket}&language=${safeLocale}`;
-  const res = await fetchWithTimeout(url, { method: 'GET' });
-  if (!res.ok) throw Object.assign(new Error(`SIGL HTTP ${res.status}`), { httpStatus: res.status });
-  const arr = await res.json();
-  if (!Array.isArray(arr)) return [];
-  return arr.map((item) => item?.id).filter((id) => isValidProductId(id));
+  return fetchSiglIds(guid, market, locale);
 }
 
-export function parseDisplayCatalogProducts(json) {
-  const products = Array.isArray(json?.Products) ? json.Products : [];
-  const result = {};
-  for (const prod of products) {
-    const productId = prod?.ProductId;
-    if (!isValidProductId(productId)) continue;
-    const loc = prod?.LocalizedProperties?.[0] || {};
-    const props = prod?.Properties || {};
-    const mkt = prod?.MarketProperties?.[0] || {};
-
-    let ageRating = '';
-    if (Array.isArray(mkt.ContentRatings)) {
-      const esrb = mkt.ContentRatings.find((r) => r.RatingSystem === 'ESRB' && r.RatingId);
-      const pegi = mkt.ContentRatings.find((r) => r.RatingSystem === 'PEGI' && r.RatingId);
-      ageRating = (esrb || pegi)?.RatingId || '';
-    }
-    const releaseDate = typeof mkt.OriginalReleaseDate === 'string' ? mkt.OriginalReleaseDate.slice(0, 10) : '';
-    const year = /^\d{4}/.test(releaseDate) ? releaseDate.slice(0, 4) : '';
-
-    let coverUrl = '';
-    let heroUrl = '';
-    let posterUrl = '';
-    const screenshots = [];
-
-    const imgs = Array.isArray(loc.Images) ? loc.Images : [];
-    const pickBest = (ranks) => {
-      let best = 0;
-      let bestUri = '';
-      for (const im of imgs) {
-        const r = ranks[im.ImagePurpose] || 0;
-        if (r > best && im.Uri) {
-          best = r;
-          bestUri = im.Uri;
-        }
-      }
-      return bestUri;
-    };
-
-    const rawCover = pickBest({ TiledHeroArt: 5, BrandedKeyArt: 4, Poster: 3, BoxArt: 2, SuperHeroArt: 1 });
-    const rawHero = pickBest({ SuperHeroArt: 4, TitledHeroArt: 3, BrandedKeyArt: 2, TiledHeroArt: 1 });
-    const rawPoster = pickBest({ Poster: 2, BoxArt: 1 });
-
-    if (rawCover) coverUrl = formatStoreImageUrl(rawCover, 384, 216);
-    if (rawHero) heroUrl = formatStoreImageUrl(rawHero, 1920, 1080);
-    if (rawPoster) posterUrl = formatStoreImageUrl(rawPoster, 550, 825);
-
-    for (const im of imgs) {
-      if (im.ImagePurpose === 'Screenshot' && im.Uri && screenshots.length < 8) {
-        screenshots.push({
-          thumb: formatStoreImageUrl(im.Uri, 524, 295),
-          full: formatStoreImageUrl(im.Uri, 1920, 1080),
-        });
-      }
-    }
-
-    const attrs = Array.isArray(props.Attributes) ? props.Attributes.map((a) => a.Name).filter(Boolean) : [];
-
-    result[productId] = {
-      productId,
-      title: loc.ProductTitle || productId,
-      publisher: loc.PublisherName || '',
-      developer: loc.DeveloperName || '',
-      shortDescription: loc.ShortDescription || loc.ProductDescription || '',
-      description: loc.ProductDescription || loc.ShortDescription || '',
-      category: props.Category || 'Other',
-      year,
-      releaseDate,
-      ageRating,
-      attributes: attrs,
-      coverUrl,
-      heroUrl: heroUrl || coverUrl,
-      posterUrl: posterUrl || coverUrl,
-      screenshots,
-    };
-  }
-  return result;
-}
-
-export async function fetchDisplayCatalogBatch(productIds, market = 'US', locale = 'en-US') {
-  const validIds = productIds.filter(isValidProductId).slice(0, 20);
-  if (validIds.length === 0) return {};
-  const safeMarket = /^[A-Z]{2}$/.test(market) ? market : 'US';
-  const safeLocale = /^[a-z]{2}-[A-Z]{2}$/.test(locale) ? locale : 'en-US';
-  const out = {};
-  // Upstream batches up to 8 IDs per Store query
-  for (let i = 0; i < validIds.length; i += 8) {
-    const chunk = validIds.slice(i, i + 8);
-    const url = `https://displaycatalog.mp.microsoft.com/v7.0/products?bigIds=${chunk.join(',')}&market=${safeMarket}&languages=${safeLocale}&fieldsTemplate=Details`;
-    const res = await fetchWithTimeout(url, { method: 'GET' });
-    if (!res.ok) continue;
-    const json = await res.json();
-    Object.assign(out, parseDisplayCatalogProducts(json));
-  }
-  return out;
+export async function fetchDisplayCatalogBatch(productIds, market = 'US', locale = 'en-US', options = {}) {
+  return fetchDisplayCatalogChunks(productIds, market, locale, {
+    chunkSize: 20,
+    concurrency: 5,
+    ...options,
+  });
 }
 
 export async function probeHostRttMs(hostname, timeoutMs = 2500) {

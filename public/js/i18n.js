@@ -129,6 +129,9 @@ const WEB_COPY = {
     requestKeyframe: 'Forzar keyframe / recargar vídeo',
     exitStream: 'Salir del juego',
     hapticsActive: 'Vibración',
+    playOnXbox: 'Jugar en play.xbox.com',
+    streamPreviewBtn: 'Vista previa WebGL / Mando',
+    liveCatalogBadge: 'Catálogo Xbox en vivo',
   },
   en: {
     labToggle: 'Lab (R3)',
@@ -157,6 +160,9 @@ const WEB_COPY = {
     requestKeyframe: 'Request Keyframe / Reload',
     exitStream: 'Exit Game',
     hapticsActive: 'Rumble',
+    playOnXbox: 'Play on play.xbox.com',
+    streamPreviewBtn: 'WebGL / Controller Preview',
+    liveCatalogBadge: 'Live Xbox Catalog',
   },
   'pt-BR': {
     labToggle: 'Lab (R3)',
@@ -185,6 +191,9 @@ const WEB_COPY = {
     requestKeyframe: 'Forçar Keyframe',
     exitStream: 'Sair do Jogo',
     hapticsActive: 'Vibração',
+    playOnXbox: 'Jogar em play.xbox.com',
+    streamPreviewBtn: 'Prévia WebGL / Controle',
+    liveCatalogBadge: 'Catálogo Xbox ao vivo',
   },
   fr: {
     labToggle: 'Lab (R3)',
@@ -213,6 +222,9 @@ const WEB_COPY = {
     requestKeyframe: 'Forcer image clé',
     exitStream: 'Quitter le jeu',
     hapticsActive: 'Vibrations',
+    playOnXbox: 'Jouer sur play.xbox.com',
+    streamPreviewBtn: 'Aperçu WebGL / Manette',
+    liveCatalogBadge: 'Catalogue Xbox en direct',
   },
   it: {
     labToggle: 'Lab (R3)',
@@ -241,6 +253,9 @@ const WEB_COPY = {
     requestKeyframe: 'Richiedi Keyframe',
     exitStream: 'Esci dal gioco',
     hapticsActive: 'Vibrazione',
+    playOnXbox: 'Gioca su play.xbox.com',
+    streamPreviewBtn: 'Anteprima WebGL / Controller',
+    liveCatalogBadge: 'Catalogo Xbox Live',
   },
   de: {
     labToggle: 'Lab (R3)',
@@ -269,6 +284,9 @@ const WEB_COPY = {
     requestKeyframe: 'Keyframe anfordern',
     exitStream: 'Spiel beenden',
     hapticsActive: 'Vibration',
+    playOnXbox: 'Auf play.xbox.com spielen',
+    streamPreviewBtn: 'WebGL / Controller-Vorschau',
+    liveCatalogBadge: 'Live-Xbox-Katalog',
   },
 };
 
