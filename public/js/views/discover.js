@@ -3,6 +3,7 @@
 
 import { t } from '../i18n.js';
 import { icon } from '../icons.js';
+import { artworkUrl } from '../paths.js';
 import { escapeHtml, renderShelfSection } from './cards.js';
 
 export function renderDiscoverView(state) {
@@ -33,7 +34,7 @@ export function renderDiscoverView(state) {
         featured
           ? `
         <div class="x4-discover-banner">
-          <div class="x4-hero-bg" style="background-image:url('${escapeHtml(featured.heroUrl || featured.coverUrl || `/api/artwork/${featured.productId}/hero.svg`)}')"></div>
+          <div class="x4-hero-bg" style="background-image:url('${escapeHtml(featured.heroUrl || featured.coverUrl || artworkUrl(featured.productId, 'hero.svg'))}')"></div>
           <div class="x4-hero-scrim"></div>
           <div class="x4-hero-content">
             <span class="x4-pill is-accent">${t('X4_TR_APPLE_FEATURED_BADGE')}</span>

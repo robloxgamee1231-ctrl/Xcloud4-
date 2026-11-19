@@ -2,6 +2,7 @@
 /* Main XCloud4 UI 2.0 Browser Application Shell & Router. */
 
 import { api } from './api.js';
+import { appUrl } from './paths.js';
 import { initI18n, setLanguage, setIdentityVersions, t, w } from './i18n.js';
 import { icon, brandWordmark } from './icons.js';
 import { KeyboardGamepadDriver, readBrowserGamepad, triggerBrowserRumble, XBOX_BUTTONS } from './input-engine.js';
@@ -606,7 +607,7 @@ async function handleDelegatedClick(e) {
   }
   if (action === 'inspect-lua') {
     const script = target.dataset.script;
-    const text = await fetch(`/assets/scripts/${encodeURIComponent(script)}`).then((r) => r.text());
+    const text = await fetch(appUrl(`assets/scripts/${encodeURIComponent(script)}`)).then((r) => r.text());
     showModal({
       title: script,
       bodyHtml: `<pre class="x4-code-viewer">${escapeHtml(text)}</pre>`,

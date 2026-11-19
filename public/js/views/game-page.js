@@ -3,6 +3,7 @@
 
 import { t, trCategory, w } from '../i18n.js';
 import { icon } from '../icons.js';
+import { artworkUrl } from '../paths.js';
 import { escapeHtml, formatPlayTime, formatRelativeTime, renderShelfSection } from './cards.js';
 
 export function renderGamePageView(state, item) {
@@ -13,7 +14,7 @@ export function renderGamePageView(state, item) {
   const isFav = favorites.includes(item.productId);
   const inMyGames = myGames.includes(item.productId);
   const rec = localRecents[item.productId];
-  const heroBg = item.heroUrl || item.coverUrl || `/api/artwork/${item.productId}/hero.svg`;
+  const heroBg = item.heroUrl || item.coverUrl || artworkUrl(item.productId, 'hero.svg');
   const canPlay = auth.signedIn || item.freeToPlay;
 
   const similar = catalogItems
@@ -100,7 +101,7 @@ export function renderGamePageView(state, item) {
                    .map(
                      (s, idx) => `
                        <button class="x4-shot-card x4-focusable" data-action="zoom-shot" data-shot-url="${escapeHtml(s.full || s.thumb)}" data-shot-title="${escapeHtml(item.title)} (${idx + 1})" type="button">
-                         <img src="${escapeHtml(s.thumb || s.full)}" alt="Screenshot ${idx + 1}" loading="lazy" onerror="this.onerror=null;this.src='/api/artwork/${escapeHtml(item.productId)}/shot${idx + 1}.svg';" />
+                         <img src="${escapeHtml(s.thumb || s.full)}" alt="Screenshot ${idx + 1}" loading="lazy" onerror="this.onerror=null;this.src='${escapeHtml(artworkUrl(item.productId, `shot${idx + 1}.svg`))}';" />
                        </button>`
                    )
                    .join('')}

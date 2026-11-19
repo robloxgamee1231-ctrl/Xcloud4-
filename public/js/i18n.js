@@ -18,7 +18,7 @@ export const SUPPORTED_LANGUAGES = [
 ];
 
 export async function initI18n() {
-  const res = await fetch('/js/i18n-data.json');
+  const res = await fetch(new URL('./i18n-data.json', import.meta.url));
   i18nData = await res.json();
   setLanguage('auto');
 }

@@ -3,6 +3,7 @@
 
 import { t, w } from '../i18n.js';
 import { icon } from '../icons.js';
+import { appUrl } from '../paths.js';
 import { generateQrSvg } from '../qrcode-svg.js';
 import { escapeHtml, formatPlayTime } from './cards.js';
 
@@ -26,7 +27,7 @@ export function renderAccountView(state) {
         <div class="x4-account-grid">
           <div class="x4-panel">
             <div class="x4-panel-brand">
-              <img src="/assets/branding/profile.svg" alt="XCloud4 Profile" class="x4-profile-svg" />
+              <img src="${appUrl('assets/branding/profile.svg')}" alt="XCloud4 Profile" class="x4-profile-svg" />
               <div>
                 <h2>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</h2>
                 <p class="x4-muted">${t('X4_TR_U49_HOME_SIGN_IN_SUBTITLE')}</p>
@@ -123,7 +124,7 @@ export function renderAccountView(state) {
       <div class="x4-account-grid">
         <div class="x4-panel">
           <div class="x4-panel-brand">
-            <img src="/assets/branding/profile.svg" alt="Profile" class="x4-profile-svg" />
+            <img src="${appUrl('assets/branding/profile.svg')}" alt="Profile" class="x4-profile-svg" />
             <div>
               <h2>${escapeHtml(auth.gamertag)}</h2>
               <div class="x4-pill-row">

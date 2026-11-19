@@ -1,14 +1,27 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Frontend REST client for XCloud4 backend relay. */
+/* Frontend REST client for XCloud4 backend relay with automatic static-site browser fallback. */
 
-async function request(method, url, body = undefined) {
+import { appUrl, isStaticMode, setStaticMode } from './paths.js';
+import { staticBackend } from './static-backend.js';
+
+async function request(method, relativePath, body = undefined) {
+  if (isStaticMode()) {
+    throw new Error('Static mode active');
+  }
   const opts = { method, headers: {} };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(url, opts);
+  const res = await fetch(appUrl(relativePath), opts);
+  const ctype = res.headers.get('content-type') || '';
   const text = await res.text();
+  if (!ctype.includes('application/json')) {
+    throw Object.assign(new Error(`Non-JSON response (${res.status})`), {
+      status: res.status,
+      isStaticFallbackSignal: true,
+    });
+  }
   let json = {};
   try {
     json = text ? JSON.parse(text) : {};
@@ -24,37 +37,81 @@ async function request(method, url, body = undefined) {
   return json;
 }
 
+function withStaticFallback(methodName, serverFn) {
+  return async (...args) => {
+    if (isStaticMode()) {
+      return staticBackend[methodName](...args);
+    }
+    try {
+      return await serverFn(...args);
+    } catch (err) {
+      if (err.isStaticFallbackSignal || err.name === 'TypeError') {
+        setStaticMode(true);
+        return staticBackend[methodName](...args);
+      }
+      throw err;
+    }
+  };
+}
+
 export const api = {
-  getState: () => request('GET', '/api/state'),
-  saveSettings: (payload) => request('POST', '/api/settings', payload),
-  resetSettings: (keepLabEnabled = false) => request('POST', '/api/settings/reset', { keepLabEnabled }),
-  startDeviceCode: () => request('POST', '/api/auth/device-code', {}),
-  pollDeviceCode: () => request('POST', '/api/auth/poll', {}),
-  demoSignIn: (gamertag) => request('POST', '/api/auth/demo', { gamertag }),
-  logout: (forget = false) => request('POST', '/api/auth/logout', { forget }),
-  getPublicLists: (market, locale) => {
+  getState: withStaticFallback('getState', () => request('GET', 'api/state')),
+  saveSettings: withStaticFallback('saveSettings', (payload) => request('POST', 'api/settings', payload)),
+  resetSettings: withStaticFallback('resetSettings', (keepLabEnabled = false) =>
+    request('POST', 'api/settings/reset', { keepLabEnabled })
+  ),
+  startDeviceCode: withStaticFallback('startDeviceCode', () => request('POST', 'api/auth/device-code', {})),
+  pollDeviceCode: withStaticFallback('pollDeviceCode', () => request('POST', 'api/auth/poll', {})),
+  demoSignIn: withStaticFallback('demoSignIn', (gamertag) => request('POST', 'api/auth/demo', { gamertag })),
+  logout: withStaticFallback('logout', (forget = false) => request('POST', 'api/auth/logout', { forget })),
+  getPublicLists: withStaticFallback('getPublicLists', (market, locale) => {
     const qs = market && locale ? `?market=${encodeURIComponent(market)}&locale=${encodeURIComponent(locale)}` : '';
-    return request('GET', `/api/catalog/public-lists${qs}`);
-  },
-  getCatalog: () => request('GET', '/api/catalog'),
-  getRecents: () => request('GET', '/api/catalog/recents'),
-  getProductDetails: (id) => request('GET', `/api/catalog/product/${encodeURIComponent(id)}`),
-  toggleFavorite: (productId) => request('POST', '/api/library/favorite', { productId }),
-  toggleMyGames: (productId) => request('POST', '/api/library/mygames', { productId }),
-  recordPlayTime: (productId, titleId, title, deltaSec) =>
-    request('POST', '/api/library/playtime', { productId, titleId, title, deltaSec }),
-  getCloudTime: () => request('GET', '/api/account/cloud-time'),
-  pingServers: () => request('GET', '/api/servers/ping'),
-  playSession: (titleId) => request('POST', '/api/session/play', { titleId }),
-  getWaitTime: (titleId) => request('GET', `/api/session/waittime/${encodeURIComponent(titleId)}`),
-  getSessionState: (id) => request('GET', `/api/session/${encodeURIComponent(id)}/state`),
-  connectSession: (id) => request('POST', `/api/session/${encodeURIComponent(id)}/connect`, {}),
-  sendSdpOffer: (id, sdp) => request('POST', `/api/session/${encodeURIComponent(id)}/sdp`, { sdp }),
-  getSdpAnswer: (id) => request('GET', `/api/session/${encodeURIComponent(id)}/sdp`),
-  sendIceCandidates: (id, candidates) => request('POST', `/api/session/${encodeURIComponent(id)}/ice`, { candidates }),
-  getIceCandidates: (id) => request('GET', `/api/session/${encodeURIComponent(id)}/ice`),
-  keepaliveSession: (id) => request('POST', `/api/session/${encodeURIComponent(id)}/keepalive`, {}),
-  deleteSession: (id) => request('DELETE', `/api/session/${encodeURIComponent(id)}`),
-  checkUpdates: () => request('GET', '/api/updates/check'),
-  getLicenses: () => request('GET', '/api/licenses'),
+    return request('GET', `api/catalog/public-lists${qs}`);
+  }),
+  getCatalog: withStaticFallback('getCatalog', () => request('GET', 'api/catalog')),
+  getRecents: withStaticFallback('getRecents', () => request('GET', 'api/catalog/recents')),
+  getProductDetails: withStaticFallback('getProductDetails', (id) =>
+    request('GET', `api/catalog/product/${encodeURIComponent(id)}`)
+  ),
+  toggleFavorite: withStaticFallback('toggleFavorite', (productId) =>
+    request('POST', 'api/library/favorite', { productId })
+  ),
+  toggleMyGames: withStaticFallback('toggleMyGames', (productId) =>
+    request('POST', 'api/library/mygames', { productId })
+  ),
+  recordPlayTime: withStaticFallback('recordPlayTime', (productId, titleId, title, deltaSec) =>
+    request('POST', 'api/library/playtime', { productId, titleId, title, deltaSec })
+  ),
+  getCloudTime: withStaticFallback('getCloudTime', () => request('GET', 'api/account/cloud-time')),
+  pingServers: withStaticFallback('pingServers', () => request('GET', 'api/servers/ping')),
+  playSession: withStaticFallback('playSession', (titleId) => request('POST', 'api/session/play', { titleId })),
+  getWaitTime: withStaticFallback('getWaitTime', (titleId) =>
+    request('GET', `api/session/waittime/${encodeURIComponent(titleId)}`)
+  ),
+  getSessionState: withStaticFallback('getSessionState', (id) =>
+    request('GET', `api/session/${encodeURIComponent(id)}/state`)
+  ),
+  connectSession: withStaticFallback('connectSession', (id) =>
+    request('POST', `api/session/${encodeURIComponent(id)}/connect`, {})
+  ),
+  sendSdpOffer: withStaticFallback('sendSdpOffer', (id, sdp) =>
+    request('POST', `api/session/${encodeURIComponent(id)}/sdp`, { sdp })
+  ),
+  getSdpAnswer: withStaticFallback('getSdpAnswer', (id) =>
+    request('GET', `api/session/${encodeURIComponent(id)}/sdp`)
+  ),
+  sendIceCandidates: withStaticFallback('sendIceCandidates', (id, candidates) =>
+    request('POST', `api/session/${encodeURIComponent(id)}/ice`, { candidates })
+  ),
+  getIceCandidates: withStaticFallback('getIceCandidates', (id) =>
+    request('GET', `api/session/${encodeURIComponent(id)}/ice`)
+  ),
+  keepaliveSession: withStaticFallback('keepaliveSession', (id) =>
+    request('POST', `api/session/${encodeURIComponent(id)}/keepalive`, {})
+  ),
+  deleteSession: withStaticFallback('deleteSession', (id) =>
+    request('DELETE', `api/session/${encodeURIComponent(id)}`)
+  ),
+  checkUpdates: withStaticFallback('checkUpdates', () => request('GET', 'api/updates/check')),
+  getLicenses: withStaticFallback('getLicenses', () => request('GET', 'api/licenses')),
 };

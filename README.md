@@ -34,6 +34,16 @@ Run tests:
 npm test
 ```
 
+## GitHub Pages Static Site
+
+The frontend (`public/`) automatically switches to browser-only **Sandbox Demo Mode** (`public/js/static-backend.js`, `localStorage` persistence, and subpath-safe asset resolution via `public/js/paths.js`) when served without the Node.js relay—for example on GitHub Pages at **https://robloxgamee1231-ctrl.github.io/Xcloud4-/** via `.github/workflows/pages.yml`.
+
+Build the static bundle locally into `_site/`:
+
+```bash
+npm run build:site
+```
+
 ## License
 
 GPL-3.0-only — see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

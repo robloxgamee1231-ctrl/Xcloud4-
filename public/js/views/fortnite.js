@@ -3,6 +3,7 @@
 
 import { t, w } from '../i18n.js';
 import { icon } from '../icons.js';
+import { artworkUrl } from '../paths.js';
 import { escapeHtml } from './cards.js';
 
 export function renderFortniteView(state) {
@@ -13,14 +14,14 @@ export function renderFortniteView(state) {
     title: 'Fortnite',
     developer: 'Epic Games',
     publisher: 'Epic Games',
-    heroUrl: '/api/artwork/BT5P2X999VH2/hero.svg',
+    heroUrl: artworkUrl('BT5P2X999VH2', 'hero.svg'),
     shortDescription: t('X4_TR_U49_FORTNITE_SUBTITLE'),
   };
 
   return `
     <div class="x4-page">
       <div class="x4-gamepage-hero is-fortnite">
-        <div class="x4-gamepage-hero-bg" style="background-image:url('${escapeHtml(fn.heroUrl || '/api/artwork/BT5P2X999VH2/hero.svg')}')"></div>
+        <div class="x4-gamepage-hero-bg" style="background-image:url('${escapeHtml(fn.heroUrl || artworkUrl('BT5P2X999VH2', 'hero.svg'))}')"></div>
         <div class="x4-gamepage-hero-scrim"></div>
         <div class="x4-gamepage-hero-content">
           <div class="x4-gamepage-badges">

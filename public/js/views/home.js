@@ -3,6 +3,7 @@
 
 import { t, w } from '../i18n.js';
 import { icon } from '../icons.js';
+import { appUrl, artworkUrl } from '../paths.js';
 import { escapeHtml, formatPlayTime, formatRelativeTime, renderShelfSection } from './cards.js';
 
 export function renderHomeView(state) {
@@ -30,7 +31,7 @@ export function renderHomeView(state) {
   if (!auth.signedIn) {
     heroHtml = `
       <div class="x4-hero-card x4-hero-signin">
-        <div class="x4-hero-bg" style="background-image:url('/assets/branding/pic1.png')"></div>
+        <div class="x4-hero-bg" style="background-image:url('${appUrl('assets/branding/pic1.png')}')"></div>
         <div class="x4-hero-scrim"></div>
         <div class="x4-hero-content">
           <span class="x4-pill is-accent">${countLabel}</span>
@@ -53,7 +54,7 @@ export function renderHomeView(state) {
     const rec = localRecents[continueItem.productId];
     heroHtml = `
       <div class="x4-hero-card">
-        <div class="x4-hero-bg" style="background-image:url('${escapeHtml(continueItem.heroUrl || continueItem.coverUrl || `/api/artwork/${continueItem.productId}/hero.svg`)}')"></div>
+        <div class="x4-hero-bg" style="background-image:url('${escapeHtml(continueItem.heroUrl || continueItem.coverUrl || artworkUrl(continueItem.productId, 'hero.svg'))}')"></div>
         <div class="x4-hero-scrim"></div>
         <div class="x4-hero-content">
           <span class="x4-pill is-accent">${t('X4_TR_U49_HOME_LAST_PLAYED')} · ${formatRelativeTime(rec?.lastPlayedAt)} · ${formatPlayTime(rec?.playTimeSec)}</span>
@@ -72,7 +73,7 @@ export function renderHomeView(state) {
   } else {
     heroHtml = `
       <div class="x4-hero-card">
-        <div class="x4-hero-bg" style="background-image:url('/assets/branding/pic1.png')"></div>
+        <div class="x4-hero-bg" style="background-image:url('${appUrl('assets/branding/pic1.png')}')"></div>
         <div class="x4-hero-scrim"></div>
         <div class="x4-hero-content">
           <span class="x4-pill is-accent">${countLabel}</span>
@@ -93,7 +94,7 @@ export function renderHomeView(state) {
   const fortniteCard = fortniteItem
     ? `
       <button class="x4-fortnite-banner x4-focusable" data-action="navigate" data-route="fortnite" type="button">
-        <div class="x4-fortnite-banner-art" style="background-image:url('${escapeHtml(fortniteItem.heroUrl || '/api/artwork/BT5P2X999VH2/hero.svg')}')"></div>
+        <div class="x4-fortnite-banner-art" style="background-image:url('${escapeHtml(fortniteItem.heroUrl || artworkUrl('BT5P2X999VH2', 'hero.svg'))}')"></div>
         <div class="x4-fortnite-banner-scrim"></div>
         <div class="x4-fortnite-banner-body">
           <span class="x4-badge-f2p">${t('X4_TR_U49_FORTNITE_NO_PASS')}</span>
