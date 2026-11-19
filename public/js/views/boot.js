@@ -3,6 +3,7 @@
 
 import { t, w } from '../i18n.js';
 import { brandWordmark } from '../icons.js';
+import { appUrl } from '../paths.js';
 
 export async function runBootSequence(rootEl, { isLab, onPrepare }) {
   const version = isLab ? '0.7.111-lab' : '1.3.0-beta';
@@ -16,7 +17,7 @@ export async function runBootSequence(rootEl, { isLab, onPrepare }) {
 
   rootEl.innerHTML = `
     <div class="x4-boot-screen">
-      <div class="x4-boot-bg" style="background-image:url('/assets/branding/${isLab ? 'pic1-lab.png' : 'pic1.png'}')"></div>
+      <div class="x4-boot-bg" style="background-image:url('${appUrl(`assets/branding/${isLab ? 'pic1-lab.png' : 'pic1.png'}`)}')"></div>
       <div class="x4-boot-scrim"></div>
       <div class="x4-boot-center">
         <div class="x4-boot-brand-row">

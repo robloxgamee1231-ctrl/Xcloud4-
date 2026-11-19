@@ -3,6 +3,7 @@
 
 import { t, w, trStage } from '../i18n.js';
 import { icon } from '../icons.js';
+import { artworkUrl } from '../paths.js';
 import { CloudStreamSession } from '../webrtc-player.js';
 import { NetHudController } from '../net-hud.js';
 import { escapeHtml, showModal } from './cards.js';
@@ -12,7 +13,7 @@ export async function launchGameStream({ title, profile, settings, keyboardDrive
   overlay.id = 'x4StreamOverlay';
   overlay.className = 'x4-stream-overlay';
 
-  const heroArt = title.heroUrl || title.coverUrl || `/api/artwork/${title.productId}/hero.svg`;
+  const heroArt = title.heroUrl || title.coverUrl || artworkUrl(title.productId, 'hero.svg');
   const hud = new NetHudController();
   const touchPref = settings?.lab?.enabled ? settings.lab.touchOverlay : 'auto';
   const isCoarsePointer = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)')?.matches;

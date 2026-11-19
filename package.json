@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "build:site": "node scripts/build-site.mjs",
     "test": "node --test tests/*.test.js"
   },
   "engines": {

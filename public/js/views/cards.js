@@ -3,6 +3,7 @@
 
 import { t, trCategory } from '../i18n.js';
 import { icon } from '../icons.js';
+import { artworkUrl } from '../paths.js';
 
 export function escapeHtml(str) {
   return String(str ?? '')
@@ -37,9 +38,9 @@ export function renderGameCard(item, { isFav = false, recentInfo = null, variant
   const imgUrl = escapeHtml(
     (variant === 'poster' ? item.posterUrl : item.coverUrl) ||
     item.coverUrl ||
-    `/api/artwork/${pid}/cover.svg`
+    artworkUrl(pid, 'cover.svg')
   );
-  const fallbackImg = `/api/artwork/${pid}/cover.svg`;
+  const fallbackImg = escapeHtml(artworkUrl(pid, 'cover.svg'));
   const cat = trCategory(item.category || '');
   const metaParts = [];
   if (cat) metaParts.push(cat);
