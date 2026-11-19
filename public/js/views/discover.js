@@ -1,18 +1,21 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Discover view backed by Xbox Game Pass SIGLs (Free, New, Popular, Leaving). */
 
-import { t } from '../i18n.js';
+import { t, w } from '../i18n.js';
 import { icon } from '../icons.js';
 import { artworkUrl } from '../paths.js';
+import { buildPlayXboxUrl } from '../xbox-catalog.js';
 import { escapeHtml, renderShelfSection } from './cards.js';
 
 export function renderDiscoverView(state) {
-  const { catalogItems, publicLists, favorites, localRecents } = state;
+  const { auth, catalogItems, publicLists, favorites, localRecents } = state;
   const byId = new Map(catalogItems.map((i) => [i.productId, i]));
   const mapIds = (ids) => (ids || []).map((id) => byId.get(id)).filter(Boolean);
 
   const featuredList = mapIds(publicLists?.popular);
   const featured = featuredList[0] || catalogItems[0];
+  const featuredPlayUrl = featured ? (featured.playUrl || buildPlayXboxUrl(featured.productId, featured.title)) : '';
+  const liveStreamReady = Boolean(auth?.signedIn && !auth?.demoMode);
 
   const shelves = [
     { id: 'free', title: t('X4_TR_CATALOG_FREE'), items: mapIds(publicLists?.free) },
@@ -41,10 +44,22 @@ export function renderDiscoverView(state) {
             <h2>${escapeHtml(featured.title)}</h2>
             <p>${escapeHtml(featured.shortDescription || '')}</p>
             <div class="x4-hero-actions">
-              <button class="x4-btn is-primary x4-focusable" data-action="play-game" data-product-id="${escapeHtml(featured.productId)}" type="button">
-                ${icon('play')} <span>${t('X4_TR_APPLE_PLAY_NOW_BTN')}</span>
-              </button>
-              <button class="x4-btn is-secondary x4-focusable" data-action="open-game" data-product-id="${escapeHtml(featured.productId)}" type="button">
+              ${
+                liveStreamReady
+                  ? `<button class="x4-btn is-primary x4-focusable" data-action="play-game" data-product-id="${escapeHtml(featured.productId)}" type="button">
+                       ${icon('play')} <span>${t('X4_TR_APPLE_PLAY_NOW_BTN')}</span>
+                     </button>
+                     <a class="x4-btn is-secondary x4-focusable" href="${escapeHtml(featuredPlayUrl)}" target="_blank" rel="noopener noreferrer">
+                       ${icon('world')} <span>${w('playOnXbox')}</span>
+                     </a>`
+                  : `<a class="x4-btn is-primary x4-focusable" href="${escapeHtml(featuredPlayUrl)}" target="_blank" rel="noopener noreferrer">
+                       ${icon('play')} <span>${w('playOnXbox')}</span>
+                     </a>
+                     <button class="x4-btn is-secondary x4-focusable" data-action="${auth?.signedIn ? 'play-game' : 'demo-play'}" data-product-id="${escapeHtml(featured.productId)}" type="button">
+                       ${icon('device-gamepad')} <span>${w('streamPreviewBtn')}</span>
+                     </button>`
+              }
+              <button class="x4-btn is-ghost x4-focusable" data-action="open-game" data-product-id="${escapeHtml(featured.productId)}" type="button">
                 <span>${t('X4_TR_U49_VIEW_GAME_SHORT')}</span>
               </button>
             </div>

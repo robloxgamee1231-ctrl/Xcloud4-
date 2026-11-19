@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Paginated Catalog Grid Browser matching src/ui/catalog_browser.c. */
 
-import { t, trCategory } from '../i18n.js';
+import { t, trCategory, w } from '../i18n.js';
 import { escapeHtml, renderGameCard } from './cards.js';
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 24;
 
 export function renderCatalogView(state) {
-  const { catalogItems, favorites, localRecents, catalogFilter } = state;
+  const { catalogItems, catalogSource, favorites, localRecents, catalogFilter } = state;
   const favSet = new Set(favorites);
+  const isLiveCatalog = catalogSource === 'live' || catalogSource === 'live-snapshot';
 
   const genres = ['ALL', ...new Set(catalogItems.map((i) => i.category).filter(Boolean)).values()].sort((a, b) =>
     a === 'ALL' ? -1 : b === 'ALL' ? 1 : a.localeCompare(b)
@@ -46,7 +47,10 @@ export function renderCatalogView(state) {
           <h1 class="x4-page-title">${t('X4_TR_CATALOG_TITLE')}</h1>
           <p class="x4-muted">${t('X4_TR_U49_CATALOG_SUBTITLE')}</p>
         </div>
-        <span class="x4-pill is-accent">${escapeHtml(countLabel)}</span>
+        <div class="x4-pill-row">
+          ${isLiveCatalog ? `<span class="x4-pill is-ok">${escapeHtml(w('liveCatalogBadge'))}</span>` : ''}
+          <span class="x4-pill is-accent">${escapeHtml(countLabel)}</span>
+        </div>
       </div>
 
       <div class="x4-filter-bar">

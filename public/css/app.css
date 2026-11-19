@@ -417,6 +417,7 @@ button, input, select { font-family: inherit; color: inherit; }
   border: 1px solid transparent;
   font-size: 14px;
   font-weight: 600;
+  text-decoration: none;
   cursor: pointer;
   transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
 }

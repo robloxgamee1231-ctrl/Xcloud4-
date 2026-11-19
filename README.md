@@ -36,12 +36,14 @@ npm test
 
 ## GitHub Pages Static Site
 
-The frontend (`public/`) automatically switches to browser-only **Sandbox Demo Mode** (`public/js/static-backend.js`, `localStorage` persistence, and subpath-safe asset resolution via `public/js/paths.js`) when served without the Node.js relay—for example on GitHub Pages at **https://robloxgamee1231-ctrl.github.io/Xcloud4-/** via `.github/workflows/pages.yml`.
+The frontend (`public/`) automatically fetches live **Xbox Cloud Gaming SIGLs** (`catalog.gamepass.com/sigls/v2` including the full Cloud Gaming gallery `29a81209-df6f-41fd-a528-2ae6b91f719c`) and **Microsoft Store DisplayCatalog v7.0** metadata (`displaycatalog.mp.microsoft.com`), falls back seamlessly to the deploy-time `data/xbox-catalog.json` snapshot built by `.github/workflows/pages.yml` (`scripts/sync-xbox-catalog.mjs`), and links every game directly to **`play.xbox.com`** (`https://www.xbox.com/play/games/<slug>/<productId>`) alongside local `localStorage` persistence and the interactive WebGL / Gamepad preview when served without the Node.js relay—for example on GitHub Pages at **https://robloxgamee1231-ctrl.github.io/Xcloud4-/**.
 
 Build the static bundle locally into `_site/`:
 
 ```bash
 npm run build:site
+# Optional: sync live Microsoft/Xbox Cloud Gaming catalog snapshot into _site/data/xbox-catalog.json
+npm run sync:catalog
 ```
 
 ## License

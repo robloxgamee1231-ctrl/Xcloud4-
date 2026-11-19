@@ -29,8 +29,9 @@ import {
   fetchCloudTime,
   fetchCloudCatalog,
   fetchCloudMru,
-  fetchSiglList,
   fetchDisplayCatalogBatch,
+  fetchFullXboxCatalogSnapshot,
+  buildPlayXboxUrl,
   probeHostRttMs,
   gssvSessionRequest,
 } from './xbox-protocol.js';
@@ -109,6 +110,53 @@ export async function createAppServer(options = {}) {
   let siglCache = { ts: 0, market: '', locale: '', lists: null };
   let activeDeviceLogin = null;
   const activeSessions = new Map(); // sessionId -> { baseUri, titleId, demoMode, createdAt, status }
+
+  async function loadPublicCatalogData(market, locale) {
+    const cacheValid =
+      siglCache.lists &&
+      siglCache.market === market &&
+      siglCache.locale === locale &&
+      Date.now() - siglCache.ts < 10 * 60_000;
+
+    if (cacheValid) {
+      return siglCache.payload;
+    }
+
+    try {
+      const snap = await fetchFullXboxCatalogSnapshot({ market, locale, includeAll: true, concurrency: 5 });
+      for (const [k, v] of Object.entries(snap.metadata)) metaCache.set(k, v);
+      siglCache = { ts: Date.now(), market, locale, lists: snap.lists, payload: snap };
+      return snap;
+    } catch (liveErr) {
+      // Check optional prebuilt snapshot under public/data/xbox-catalog.json
+      try {
+        const snapPath = path.join(publicDir, 'data', 'xbox-catalog.json');
+        const raw = await fs.readFile(snapPath, 'utf8');
+        const snap = JSON.parse(raw);
+        if (snap?.metadata && Object.keys(snap.metadata).length > 0) {
+          for (const [k, v] of Object.entries(snap.metadata)) metaCache.set(k, v);
+          const payload = { ...snap, source: snap.source || 'snapshot' };
+          siglCache = { ts: Date.now(), market, locale, lists: payload.lists, payload };
+          return payload;
+        }
+      } catch {
+        // Fall through to sandbox fallback
+      }
+      const fallback = buildFallbackPublicLists();
+      for (const [k, v] of Object.entries(fallback.metadata)) metaCache.set(k, v);
+      return { ...fallback, market, locale, fallbackReason: liveErr.message };
+    }
+  }
+
+  function filterCatalogQuery(items, q) {
+    const term = String(q || '').trim().toLowerCase();
+    if (!term) return items;
+    return items.filter((item) =>
+      `${item.title || ''} ${item.publisher || ''} ${item.developer || ''} ${item.category || ''} ${item.productId || ''}`
+        .toLowerCase()
+        .includes(term)
+    );
+  }
 
   async function completeXboxAuthFlow(tokens) {
     const xbl = await authenticateXboxLive(tokens.access_token);
@@ -416,66 +464,28 @@ export async function createAppServer(options = {}) {
       return sendJson(res, 200, { ok: true, auth: store.getSanitizedAuth() });
     }
 
-    // Public SIGL lists + DisplayCatalog metadata (live with graceful sandbox fallback)
+    // Public SIGL lists + DisplayCatalog metadata (live with snapshot & sandbox fallback)
     if (method === 'GET' && pathname === '/api/catalog/public-lists') {
       const { market, locale } = normalizeLocaleMarket(
         store.state.settings.public.language,
         url.searchParams.get('market'),
         url.searchParams.get('locale')
       );
-      const cacheValid =
-        siglCache.lists &&
-        siglCache.market === market &&
-        siglCache.locale === locale &&
-        Date.now() - siglCache.ts < 5 * 60_000;
-
-      if (cacheValid) {
-        return sendJson(res, 200, siglCache.payload);
-      }
-
-      try {
-        const [free, newest, popular, leaving] = await Promise.all([
-          fetchSiglList(SIGL_GUIDS.free, market, locale),
-          fetchSiglList(SIGL_GUIDS.new, market, locale),
-          fetchSiglList(SIGL_GUIDS.popular, market, locale),
-          fetchSiglList(SIGL_GUIDS.leaving, market, locale),
-        ]);
-        const uniqueIds = [...new Set([...free.slice(0, 16), ...newest.slice(0, 16), ...popular.slice(0, 16), ...leaving.slice(0, 16)])];
-        const fetchedMeta = await fetchDisplayCatalogBatch(uniqueIds.slice(0, 32), market, locale);
-        for (const [k, v] of Object.entries(fetchedMeta)) metaCache.set(k, v);
-        const payload = {
-          lists: { free, new: newest, popular, leaving },
-          metadata: fetchedMeta,
-          source: 'live',
-          market,
-          locale,
-        };
-        siglCache = { ts: Date.now(), market, locale, lists: payload.lists, payload };
-        return sendJson(res, 200, payload);
-      } catch (err) {
-        const fallback = buildFallbackPublicLists();
-        for (const [k, v] of Object.entries(fallback.metadata)) metaCache.set(k, v);
-        return sendJson(res, 200, { ...fallback, market, locale, fallbackReason: err.message });
-      }
+      const payload = await loadPublicCatalogData(market, locale);
+      return sendJson(res, 200, payload);
     }
 
-    // Full catalog (requires signed-in session; uses live GSSV /v2/titles or demo fallback)
+    // Full catalog (uses live GSSV /v2/titles when signed in live, or full live SIGL + DisplayCatalog catalog)
     if (method === 'GET' && pathname === '/api/catalog') {
       const { market, locale } = normalizeLocaleMarket(store.state.settings.public.language);
-      if (!store.state.auth) {
-        const fallback = buildFallbackPublicLists();
+      const q = url.searchParams.get('q') || '';
+      if (!store.state.auth || store.state.auth.demoMode) {
+        const pub = await loadPublicCatalogData(market, locale);
+        const items = filterCatalogQuery(Object.values(pub.metadata || {}), q);
         return sendJson(res, 200, {
-          items: Object.values(fallback.metadata),
-          source: 'public-preview',
-          signedIn: false,
-        });
-      }
-      if (store.state.auth.demoMode) {
-        const map = buildFallbackCatalogMap();
-        return sendJson(res, 200, {
-          items: Object.values(map),
-          source: 'sandbox-demo',
-          signedIn: true,
+          items,
+          source: pub.source || (store.state.auth?.demoMode ? 'sandbox-demo' : 'public-preview'),
+          signedIn: Boolean(store.state.auth),
         });
       }
       try {
@@ -484,7 +494,7 @@ export async function createAppServer(options = {}) {
         const profile = resolveStreamProfile(store.state.settings);
         const rawTitles = await fetchCloudCatalog(baseUri, auth.gsToken, buildDeviceInfo(profile));
         const productIds = rawTitles.map((r) => r.details?.productId).filter(isValidProductId);
-        const uncached = productIds.filter((id) => !metaCache.has(id)).slice(0, 24);
+        const uncached = productIds.filter((id) => !metaCache.has(id));
         if (uncached.length > 0) {
           const meta = await fetchDisplayCatalogBatch(uncached, market, locale);
           for (const [k, v] of Object.entries(meta)) metaCache.set(k, v);
@@ -492,10 +502,11 @@ export async function createAppServer(options = {}) {
         const items = rawTitles.map((r) => {
           const pid = r.details?.productId || r.titleId;
           const m = metaCache.get(pid) || {};
+          const title = m.title || r.titleId;
           return {
             productId: pid,
             titleId: r.titleId,
-            title: m.title || r.titleId,
+            title,
             publisher: m.publisher || '',
             developer: m.developer || '',
             category: m.category || 'Other',
@@ -510,9 +521,10 @@ export async function createAppServer(options = {}) {
             heroUrl: m.heroUrl || m.coverUrl || '',
             posterUrl: m.posterUrl || m.coverUrl || '',
             screenshots: m.screenshots || [],
+            playUrl: m.playUrl || buildPlayXboxUrl(pid, title),
           };
         });
-        return sendJson(res, 200, { items, source: 'live', signedIn: true });
+        return sendJson(res, 200, { items: filterCatalogQuery(items, q), source: 'live', signedIn: true });
       } catch (err) {
         return sendJson(res, err.httpStatus || 502, { ok: false, error: err.message });
       }

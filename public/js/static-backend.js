@@ -8,8 +8,154 @@ import {
   buildStaticPublicLists,
   renderFallbackArtworkDataUrl,
 } from './fallback-catalog.js';
+import {
+  normalizeLocaleMarket,
+  isValidProductId,
+  fetchFullXboxCatalogSnapshot,
+  fetchDisplayCatalogChunks,
+} from './xbox-catalog.js';
 
 const STORAGE_KEY = 'xcloud4_static_state_v1';
+const CATALOG_CACHE_TTL_MS = 10 * 60_000;
+
+let catalogCache = {
+  ts: 0,
+  market: '',
+  locale: '',
+  source: '',
+  lists: null,
+  metadata: null,
+  allHydrated: false,
+};
+let inflightInitial = null;
+let inflightHydrate = null;
+
+export function resetStaticCatalogCache() {
+  catalogCache = {
+    ts: 0,
+    market: '',
+    locale: '',
+    source: '',
+    lists: null,
+    metadata: null,
+    allHydrated: false,
+  };
+  inflightInitial = null;
+  inflightHydrate = null;
+}
+
+async function fetchDeployedSnapshot() {
+  const res = await fetch(appUrl('data/xbox-catalog.json'), { method: 'GET' });
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!data?.metadata || Object.keys(data.metadata).length === 0) return null;
+  return data;
+}
+
+async function ensureStaticCatalog({ market, locale, hydrateAll = false } = {}) {
+  const fresh =
+    catalogCache.metadata &&
+    catalogCache.market === market &&
+    catalogCache.locale === locale &&
+    Date.now() - catalogCache.ts < CATALOG_CACHE_TTL_MS;
+
+  if (fresh && (!hydrateAll || catalogCache.allHydrated)) {
+    return catalogCache;
+  }
+
+  if (!fresh) {
+    if (!inflightInitial) {
+      inflightInitial = (async () => {
+        // Tier 1: Live Microsoft / Xbox Cloud Gaming SIGL + DisplayCatalog v7.0
+        try {
+          const live = await fetchFullXboxCatalogSnapshot({
+            market,
+            locale,
+            includeAll: false,
+            initialLimit: 48,
+            concurrency: 5,
+            timeoutMs: 12000,
+          });
+          catalogCache = {
+            ts: Date.now(),
+            market,
+            locale,
+            source: 'live',
+            lists: live.lists,
+            metadata: { ...live.metadata },
+            allHydrated: (live.lists?.all?.length || 0) <= Object.keys(live.metadata).length,
+          };
+          return catalogCache;
+        } catch {
+          // Tier 2: Prebuilt real catalog snapshot shipped with static site (data/xbox-catalog.json)
+          try {
+            const snap = await fetchDeployedSnapshot();
+            if (snap) {
+              catalogCache = {
+                ts: Date.now(),
+                market,
+                locale,
+                source: snap.source || 'live-snapshot',
+                lists: snap.lists || { free: [], new: [], popular: [], leaving: [], all: Object.keys(snap.metadata) },
+                metadata: { ...snap.metadata },
+                allHydrated: true,
+              };
+              return catalogCache;
+            }
+          } catch {
+            // Fall through to Tier 3
+          }
+          // Tier 3: Offline sandbox fallback
+          const fb = buildStaticPublicLists();
+          catalogCache = {
+            ts: Date.now(),
+            market,
+            locale,
+            source: 'sandbox-fallback',
+            lists: fb.lists,
+            metadata: fb.metadata,
+            allHydrated: true,
+          };
+          return catalogCache;
+        } finally {
+          inflightInitial = null;
+        }
+      })();
+    }
+    await inflightInitial;
+  }
+
+  if (
+    hydrateAll &&
+    !catalogCache.allHydrated &&
+    catalogCache.source === 'live' &&
+    Array.isArray(catalogCache.lists?.all)
+  ) {
+    if (!inflightHydrate) {
+      inflightHydrate = (async () => {
+        try {
+          const missing = catalogCache.lists.all.filter((id) => !catalogCache.metadata[id]);
+          if (missing.length > 0) {
+            const freeSet = new Set(catalogCache.lists.free || []);
+            const extra = await fetchDisplayCatalogChunks(missing, market, locale, {
+              freeSet,
+              chunkSize: 20,
+              concurrency: 6,
+              timeoutMs: 14000,
+            });
+            Object.assign(catalogCache.metadata, extra);
+          }
+          catalogCache.allHydrated = true;
+        } finally {
+          inflightHydrate = null;
+        }
+      })();
+    }
+    await inflightHydrate;
+  }
+
+  return catalogCache;
+}
 
 const APP_IDENTITY = {
   publicVersion: '1.3.0-beta',
@@ -296,13 +442,29 @@ export const staticBackend = {
     return { ok: true, auth: { signedIn: false } };
   },
 
-  async getPublicLists() {
-    return buildStaticPublicLists();
+  async getPublicLists(reqMarket, reqLocale) {
+    const st = readLocalState();
+    const { market, locale } = normalizeLocaleMarket(st.settings?.public?.language, reqMarket, reqLocale);
+    const cache = await ensureStaticCatalog({ market, locale, hydrateAll: false });
+    return {
+      lists: cache.lists,
+      metadata: cache.metadata,
+      source: cache.source,
+      market: cache.market,
+      locale: cache.locale,
+    };
   },
 
   async getCatalog() {
-    const map = buildFallbackCatalogMap(renderFallbackArtworkDataUrl);
-    return { items: Object.values(map), source: 'sandbox-fallback' };
+    const st = readLocalState();
+    const { market, locale } = normalizeLocaleMarket(st.settings?.public?.language);
+    const cache = await ensureStaticCatalog({ market, locale, hydrateAll: true });
+    return {
+      items: Object.values(cache.metadata || {}),
+      source: cache.source,
+      market: cache.market,
+      locale: cache.locale,
+    };
   },
 
   async getRecents() {
@@ -311,6 +473,28 @@ export const staticBackend = {
   },
 
   async getProductDetails(id) {
+    if (!isValidProductId(id)) {
+      throw Object.assign(new Error('Invalid product ID'), { status: 400 });
+    }
+    const st = readLocalState();
+    const { market, locale } = normalizeLocaleMarket(st.settings?.public?.language);
+    if (catalogCache.metadata?.[id] && catalogCache.source !== 'sandbox-fallback') {
+      return { item: catalogCache.metadata[id], source: catalogCache.source };
+    }
+    try {
+      const fetched = await fetchDisplayCatalogChunks([id], market, locale, { timeoutMs: 8000 });
+      if (fetched[id]) {
+        if (!catalogCache.metadata) catalogCache.metadata = {};
+        catalogCache.metadata[id] = fetched[id];
+        return { item: fetched[id], source: 'live' };
+      }
+    } catch {
+      // Fall through to snapshot / fallback
+    }
+    const cache = await ensureStaticCatalog({ market, locale, hydrateAll: false });
+    if (cache.metadata?.[id]) {
+      return { item: cache.metadata[id], source: cache.source };
+    }
     const map = buildFallbackCatalogMap(renderFallbackArtworkDataUrl);
     if (map[id]) return { item: map[id], source: 'sandbox-fallback' };
     throw Object.assign(new Error('Product not found'), { status: 404 });

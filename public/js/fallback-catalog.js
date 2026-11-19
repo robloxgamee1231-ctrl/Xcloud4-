@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Rich fallback catalog & bespoke SVG artwork generator for offline / sandboxed previews. */
 
+import { buildPlayXboxUrl } from './xbox-catalog.js';
+
 export const FALLBACK_TITLES = [
   {
     productId: 'BT5P2X999VH2',
@@ -455,6 +457,7 @@ export function buildFallbackCatalogMap(urlResolver) {
   for (const t of FALLBACK_TITLES) {
     byId[t.productId] = {
       ...t,
+      playUrl: buildPlayXboxUrl(t.productId, t.title),
       coverUrl: mkUrl(t.productId, 'cover.svg'),
       heroUrl: mkUrl(t.productId, 'hero.svg'),
       posterUrl: mkUrl(t.productId, 'poster.svg'),
@@ -492,7 +495,17 @@ function escapeXml(s) {
 }
 
 export function renderFallbackArtworkSvg(productId, kind = 'cover.svg') {
-  const item = FALLBACK_TITLES.find((t) => t.productId === productId) || FALLBACK_TITLES[0];
+  const matched = FALLBACK_TITLES.find((t) => t.productId === productId);
+  const item = matched || {
+    productId,
+    title: 'Xbox Cloud Gaming',
+    developer: 'Xbox Game Pass',
+    category: 'Cloud',
+    year: '2026',
+    freeToPlay: false,
+    palette: ['#07121E', '#0D362B', '#32F38B'],
+    glyph: 'XB',
+  };
   const [c0, c1, c2] = item.palette;
   const cleanKind = kind.replace(/\.svg$/, '');
   const isPoster = cleanKind === 'poster';

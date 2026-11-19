@@ -3,7 +3,8 @@
 
 import { t, w } from '../i18n.js';
 import { icon } from '../icons.js';
-import { artworkUrl } from '../paths.js';
+import { artworkUrl, isStaticMode } from '../paths.js';
+import { buildPlayXboxUrl } from '../xbox-catalog.js';
 import { escapeHtml } from './cards.js';
 
 export function renderFortniteView(state) {
@@ -17,6 +18,8 @@ export function renderFortniteView(state) {
     heroUrl: artworkUrl('BT5P2X999VH2', 'hero.svg'),
     shortDescription: t('X4_TR_U49_FORTNITE_SUBTITLE'),
   };
+  const playUrl = fn.playUrl || buildPlayXboxUrl('BT5P2X999VH2', fn.title || 'Fortnite');
+  const liveStreamReady = Boolean(auth.signedIn && !auth.demoMode);
 
   return `
     <div class="x4-page">
@@ -38,16 +41,26 @@ export function renderFortniteView(state) {
 
           <div class="x4-gamepage-actions">
             ${
-              auth.signedIn
+              liveStreamReady
                 ? `<button class="x4-btn is-primary is-lg x4-focusable" data-action="play-game" data-product-id="BT5P2X999VH2" type="button">
                      ${icon('play')} <span>${t('X4_TR_U49_FORTNITE_OPEN')}</span>
-                   </button>`
-                : `<button class="x4-btn is-primary is-lg x4-focusable" data-action="navigate" data-route="account" type="button">
-                     ${icon('user')} <span>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</span>
                    </button>
-                   <button class="x4-btn is-secondary x4-focusable" data-action="demo-play" data-product-id="BT5P2X999VH2" type="button">
-                     ${icon('play')} <span>${w('demoModeBtn')}</span>
-                   </button>`
+                   <a class="x4-btn is-secondary x4-focusable" href="${escapeHtml(playUrl)}" target="_blank" rel="noopener noreferrer">
+                     ${icon('world')} <span>${w('playOnXbox')}</span>
+                   </a>`
+                : `<a class="x4-btn is-primary is-lg x4-focusable" href="${escapeHtml(playUrl)}" target="_blank" rel="noopener noreferrer">
+                     ${icon('play')} <span>${w('playOnXbox')}</span>
+                   </a>
+                   <button class="x4-btn is-secondary x4-focusable" data-action="${auth.signedIn ? 'play-game' : 'demo-play'}" data-product-id="BT5P2X999VH2" type="button">
+                     ${icon('device-gamepad')} <span>${w('streamPreviewBtn')}</span>
+                   </button>
+                   ${
+                     !auth.signedIn && !isStaticMode()
+                       ? `<button class="x4-btn is-ghost x4-focusable" data-action="navigate" data-route="account" type="button">
+                            ${icon('user')} <span>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</span>
+                          </button>`
+                       : ''
+                   }`
             }
             <button class="x4-btn is-ghost x4-focusable" data-action="open-game" data-product-id="BT5P2X999VH2" type="button">
               <span>${t('X4_TR_U49_VIEW_GAME_SHORT')}</span>

@@ -4,6 +4,7 @@
 import { t, w, trStage } from '../i18n.js';
 import { icon } from '../icons.js';
 import { artworkUrl } from '../paths.js';
+import { buildPlayXboxUrl } from '../xbox-catalog.js';
 import { CloudStreamSession } from '../webrtc-player.js';
 import { NetHudController } from '../net-hud.js';
 import { escapeHtml, showModal } from './cards.js';
@@ -14,6 +15,7 @@ export async function launchGameStream({ title, profile, settings, keyboardDrive
   overlay.className = 'x4-stream-overlay';
 
   const heroArt = title.heroUrl || title.coverUrl || artworkUrl(title.productId, 'hero.svg');
+  const playXboxLink = title.playUrl || buildPlayXboxUrl(title.productId, title.title);
   const hud = new NetHudController();
   const touchPref = settings?.lab?.enabled ? settings.lab.touchOverlay : 'auto';
   const isCoarsePointer = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)')?.matches;
@@ -73,6 +75,7 @@ export async function launchGameStream({ title, profile, settings, keyboardDrive
           <span class="x4-pill is-accent" id="x4StreamModeBadge"></span>
         </div>
         <div class="x4-quick-menu-grid">
+          <a class="x4-btn is-primary x4-focusable" href="${escapeHtml(playXboxLink)}" target="_blank" rel="noopener noreferrer">${icon('world')} <span>${w('playOnXbox')}</span></a>
           <button class="x4-btn is-secondary x4-focusable" data-qm="nexus" type="button">${icon('device-gamepad')} <span>${w('nexusPulse')}</span></button>
           <button class="x4-btn is-secondary x4-focusable" data-qm="mute" type="button">${icon('volume')} <span id="x4QmMuteLabel">${w('muteAudio')}</span></button>
           <button class="x4-btn is-secondary x4-focusable" data-qm="mic" type="button">${icon('microphone')} <span id="x4QmMicLabel">${w('toggleMic')}</span></button>
