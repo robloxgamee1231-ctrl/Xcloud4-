@@ -1,10 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* play.xbox.com-inspired Home Spotlight Carousel, quick genre bar, and cloud shelves. */
+/* Xbox Cloud Gaming Home Spotlight Carousel, quick genre bar, and in-site cloud shelves. */
 
 import { t, w, trCategory } from '../i18n.js';
 import { icon } from '../icons.js';
-import { appUrl, artworkUrl } from '../paths.js';
-import { buildPlayXboxUrl } from '../xbox-catalog.js';
+import { appUrl } from '../paths.js';
 import { escapeHtml, formatPlayTime, formatRelativeTime, renderShelfSection } from './cards.js';
 
 export function renderHomeView(state) {
@@ -50,9 +49,6 @@ export function renderHomeView(state) {
   const activeSlide = slides[safeIdx];
   const heroItem = activeSlide?.item || null;
   const heroBgUrl = heroItem?.heroUrl || heroItem?.coverUrl || appUrl('assets/branding/pic1.png');
-  const heroPlayUrl = heroItem
-    ? heroItem.playUrl || buildPlayXboxUrl(heroItem.productId, heroItem.title)
-    : 'https://www.xbox.com/play';
 
   const countLabel =
     catalogItems.length === 1
@@ -104,19 +100,12 @@ export function renderHomeView(state) {
             <div class="x4-hero-actions">
               ${
                 heroItem
-                  ? liveStreamReady
-                    ? `<button class="x4-btn is-primary is-lg x4-focusable" data-action="play-game" data-product-id="${escapeHtml(heroItem.productId)}" type="button">
-                         ${icon('play')} <span>${t('X4_TR_APPLE_PLAY_NOW_BTN')}</span>
-                       </button>
-                       <a class="x4-btn is-secondary x4-focusable" href="${escapeHtml(heroPlayUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="${escapeHtml(heroItem.productId)}">
-                         ${icon('world')} <span>${w('playOnXbox')}</span>
-                       </a>`
-                    : `<a class="x4-btn is-primary is-lg x4-focusable" href="${escapeHtml(heroPlayUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="${escapeHtml(heroItem.productId)}">
-                         ${icon('play')} <span>${w('playOnXbox')}</span>
-                       </a>
-                       <button class="x4-btn is-secondary x4-focusable" data-action="open-game" data-product-id="${escapeHtml(heroItem.productId)}" type="button">
-                         ${icon('info-circle')} <span>${t('X4_TR_U49_VIEW_GAME_SHORT')}</span>
-                       </button>`
+                  ? `<button class="x4-btn is-primary is-lg x4-focusable" data-action="play-game" data-product-id="${escapeHtml(heroItem.productId)}" type="button">
+                       ${icon('play')} <span>${liveStreamReady ? t('X4_TR_APPLE_PLAY_NOW_BTN') : w('playNowBtn')}</span>
+                     </button>
+                     <button class="x4-btn is-secondary x4-focusable" data-action="open-game" data-product-id="${escapeHtml(heroItem.productId)}" type="button">
+                       ${icon('info-circle')} <span>${t('X4_TR_U49_VIEW_GAME_SHORT')}</span>
+                     </button>`
                   : `<button class="x4-btn is-primary is-lg x4-focusable" data-action="navigate" data-route="catalog" type="button">
                        ${icon('device-desktop')} <span>${t('X4_TR_U49_HOME_EXPLORE_CATALOG')}</span>
                      </button>`
@@ -131,8 +120,8 @@ export function renderHomeView(state) {
               }
               ${
                 !auth.signedIn
-                  ? `<button class="x4-btn is-ghost x4-focusable" data-action="navigate" data-route="account" type="button">
-                       ${icon('user')} <span>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</span>
+                  ? `<button class="x4-btn is-ghost x4-focusable" data-action="open-signin-modal" type="button">
+                       ${icon('user')} <span>${w('msSignInBtn')}</span>
                      </button>`
                   : ''
               }

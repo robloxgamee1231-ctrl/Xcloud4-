@@ -4,7 +4,6 @@
 import { t, w } from '../i18n.js';
 import { icon } from '../icons.js';
 import { artworkUrl } from '../paths.js';
-import { buildPlayXboxUrl } from '../xbox-catalog.js';
 import { escapeHtml, renderShelfSection } from './cards.js';
 
 export function renderDiscoverView(state) {
@@ -14,7 +13,6 @@ export function renderDiscoverView(state) {
 
   const featuredList = mapIds(publicLists?.popular);
   const featured = featuredList[0] || catalogItems[0];
-  const featuredPlayUrl = featured ? (featured.playUrl || buildPlayXboxUrl(featured.productId, featured.title)) : '';
   const liveStreamReady = Boolean(auth?.signedIn && auth?.liveStream);
 
   const shelves = [
@@ -44,18 +42,9 @@ export function renderDiscoverView(state) {
             <h2>${escapeHtml(featured.title)}</h2>
             <p>${escapeHtml(featured.shortDescription || '')}</p>
             <div class="x4-hero-actions">
-              ${
-                liveStreamReady
-                  ? `<button class="x4-btn is-primary x4-focusable" data-action="play-game" data-product-id="${escapeHtml(featured.productId)}" type="button">
-                       ${icon('play')} <span>${t('X4_TR_APPLE_PLAY_NOW_BTN')}</span>
-                     </button>
-                     <a class="x4-btn is-secondary x4-focusable" href="${escapeHtml(featuredPlayUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="${escapeHtml(featured.productId)}">
-                       ${icon('world')} <span>${w('playOnXbox')}</span>
-                     </a>`
-                  : `<a class="x4-btn is-primary x4-focusable" href="${escapeHtml(featuredPlayUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="${escapeHtml(featured.productId)}">
-                       ${icon('play')} <span>${w('playOnXbox')}</span>
-                     </a>`
-              }
+              <button class="x4-btn is-primary x4-focusable" data-action="play-game" data-product-id="${escapeHtml(featured.productId)}" type="button">
+                ${icon('play')} <span>${liveStreamReady ? t('X4_TR_APPLE_PLAY_NOW_BTN') : w('playNowBtn')}</span>
+              </button>
               <button class="x4-btn is-ghost x4-focusable" data-action="open-game" data-product-id="${escapeHtml(featured.productId)}" type="button">
                 <span>${t('X4_TR_U49_VIEW_GAME_SHORT')}</span>
               </button>

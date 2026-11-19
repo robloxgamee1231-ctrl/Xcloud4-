@@ -249,6 +249,7 @@ export async function createAppServer(options = {}) {
     if (method === 'GET' && pathname === '/api/health') {
       return sendJson(res, 200, {
         ok: true,
+        mode: 'node',
         app: 'XCloud4 Web Edition',
         version: store.state.settings.lab.enabled ? APP_IDENTITY.labVersion : APP_IDENTITY.publicVersion,
         time: new Date().toISOString(),
@@ -833,6 +834,20 @@ export async function createAppServer(options = {}) {
   async function serveStatic(req, res, url) {
     let relPath = decodeURIComponent(url.pathname);
     if (relPath === '/') relPath = '/index.html';
+    if (relPath === '/workers/xcloud4-relay.js') {
+      try {
+        const data = await fs.readFile(path.join(REPO_ROOT, 'workers', 'xcloud4-relay.js'));
+        res.writeHead(200, {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          'Cache-Control': 'no-cache',
+        });
+        res.end(data);
+      } catch {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not found');
+      }
+      return;
+    }
     const resolved = path.resolve(publicDir, '.' + relPath);
     if (!resolved.startsWith(path.resolve(publicDir) + path.sep) && resolved !== path.resolve(publicDir, 'index.html')) {
       res.writeHead(403, { 'Content-Type': 'text/plain' });

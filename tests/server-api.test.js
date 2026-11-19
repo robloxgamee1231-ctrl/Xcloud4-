@@ -40,10 +40,20 @@ test('HTTP server serves SPA assets, catalog APIs, settings, library, CORS relay
     assert.ok(i18nData.tables.es);
     assert.equal(i18nData.stages.length, 229);
 
-    // Relay CORS preflight & API CORS header
+    // Relay CORS preflight, /api/health & /workers/xcloud4-relay.js
     const preflightRes = await fetch(`${srv.baseUrl}/api/state`, { method: 'OPTIONS' });
     assert.equal(preflightRes.status, 204);
     assert.equal(preflightRes.headers.get('access-control-allow-origin'), '*');
+
+    const healthRes = await fetch(`${srv.baseUrl}/api/health`);
+    assert.equal(healthRes.status, 200);
+    const healthJson = await healthRes.json();
+    assert.equal(healthJson.ok, true);
+    assert.equal(healthJson.mode, 'node');
+
+    const workerRes = await fetch(`${srv.baseUrl}/workers/xcloud4-relay.js`);
+    assert.equal(workerRes.status, 200);
+    assert.ok((await workerRes.text()).includes('xbox-cors-relay'));
 
     // State & Settings update
     const stateRes = await fetch(`${srv.baseUrl}/api/state`);

@@ -4,7 +4,6 @@
 import { t, w } from '../i18n.js';
 import { icon } from '../icons.js';
 import { artworkUrl } from '../paths.js';
-import { buildPlayXboxUrl } from '../xbox-catalog.js';
 import { escapeHtml } from './cards.js';
 
 export function renderFortniteView(state) {
@@ -18,7 +17,6 @@ export function renderFortniteView(state) {
     heroUrl: artworkUrl('BT5P2X999VH2', 'hero.svg'),
     shortDescription: t('X4_TR_U49_FORTNITE_SUBTITLE'),
   };
-  const playUrl = fn.playUrl || buildPlayXboxUrl('BT5P2X999VH2', fn.title || 'Fortnite');
   const liveStreamReady = Boolean(auth?.signedIn && auth?.liveStream);
 
   return `
@@ -40,24 +38,15 @@ export function renderFortniteView(state) {
           </div>
 
           <div class="x4-gamepage-actions">
+            <button class="x4-btn is-primary is-lg x4-focusable" data-action="play-game" data-product-id="BT5P2X999VH2" type="button">
+              ${icon('play')} <span>${liveStreamReady ? t('X4_TR_U49_FORTNITE_OPEN') : w('playNowBtn')}</span>
+            </button>
             ${
-              liveStreamReady
-                ? `<button class="x4-btn is-primary is-lg x4-focusable" data-action="play-game" data-product-id="BT5P2X999VH2" type="button">
-                     ${icon('play')} <span>${t('X4_TR_U49_FORTNITE_OPEN')}</span>
-                   </button>
-                   <a class="x4-btn is-secondary x4-focusable" href="${escapeHtml(playUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="BT5P2X999VH2">
-                     ${icon('world')} <span>${w('playOnXbox')}</span>
-                   </a>`
-                : `<a class="x4-btn is-primary is-lg x4-focusable" href="${escapeHtml(playUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="BT5P2X999VH2">
-                     ${icon('play')} <span>${w('playOnXbox')}</span>
-                   </a>
-                   ${
-                     !auth?.signedIn
-                       ? `<button class="x4-btn is-secondary x4-focusable" data-action="navigate" data-route="account" type="button">
-                            ${icon('user')} <span>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</span>
-                          </button>`
-                       : ''
-                   }`
+              !auth?.signedIn
+                ? `<button class="x4-btn is-secondary x4-focusable" data-action="open-signin-modal" type="button">
+                     ${icon('user')} <span>${w('msSignInBtn')}</span>
+                   </button>`
+                : ''
             }
             <button class="x4-btn is-ghost x4-focusable" data-action="open-game" data-product-id="BT5P2X999VH2" type="button">
               <span>${t('X4_TR_U49_VIEW_GAME_SHORT')}</span>

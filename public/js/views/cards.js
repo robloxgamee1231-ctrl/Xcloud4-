@@ -1,10 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Shared UI cards, horizontal shelves with chevron navigation, and accessible modal helper. */
 
-import { t, trCategory } from '../i18n.js';
+import { t, trCategory, w } from '../i18n.js';
 import { icon } from '../icons.js';
 import { artworkUrl } from '../paths.js';
-import { buildPlayXboxUrl } from '../xbox-catalog.js';
 
 export function escapeHtml(str) {
   return String(str ?? '')
@@ -43,7 +42,6 @@ export function renderGameCard(item, { isFav = false, recentInfo = null, variant
     artworkUrl(pid, 'cover.svg')
   );
   const fallbackImg = escapeHtml(artworkUrl(pid, 'cover.svg'));
-  const playUrl = escapeHtml(item.playUrl || buildPlayXboxUrl(item.productId, rawTitle));
   const cat = trCategory(item.category || '');
   const metaParts = [];
   if (cat) metaParts.push(cat);
@@ -64,10 +62,10 @@ export function renderGameCard(item, { isFav = false, recentInfo = null, variant
           <div class="x4-game-sub">${escapeHtml(metaParts.join(' · ') || 'Xbox Cloud Gaming')}</div>
         </div>
       </button>
-      <a class="x4-card-quickplay x4-focusable" href="${playUrl}" target="_blank" rel="noopener noreferrer"
-        data-play-xbox="${pid}" title="Play ${title} on play.xbox.com" aria-label="Play ${title} on play.xbox.com">
+      <button class="x4-card-quickplay x4-focusable" data-action="play-game" data-product-id="${pid}"
+        type="button" title="${escapeHtml(w('playNowBtn'))}" aria-label="${escapeHtml(w('playNowBtn'))} (${title})">
         ${icon('play')}
-      </a>
+      </button>
     </div>
   `;
 }

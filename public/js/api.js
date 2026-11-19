@@ -63,6 +63,10 @@ export const api = {
   ),
   startDeviceCode: withStaticFallback('startDeviceCode', () => request('POST', 'api/auth/device-code', {})),
   pollDeviceCode: withStaticFallback('pollDeviceCode', () => request('POST', 'api/auth/poll', {})),
+  upgradeSession: withStaticFallback('upgradeSession', async () => {
+    const st = await request('GET', 'api/state');
+    return { ok: Boolean(st?.auth?.signedIn), auth: st?.auth };
+  }),
   logout: withStaticFallback('logout', (forget = false) => request('POST', 'api/auth/logout', { forget })),
   getPublicLists: withStaticFallback('getPublicLists', (market, locale) => {
     const qs = market && locale ? `?market=${encodeURIComponent(market)}&locale=${encodeURIComponent(locale)}` : '';

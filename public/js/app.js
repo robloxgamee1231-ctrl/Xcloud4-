@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Main XCloud4 UI 2.0 Browser Application Shell & play.xbox.com-styled HUD Router. */
+/* Main XCloud4 UI 2.0 Browser Application Shell & In-Site Xbox Cloud HUD Router. */
 
 import { api } from './api.js';
-import { appUrl, getRelayUrl, setRelayUrl } from './paths.js';
+import { appUrl, getCorsProxyUrl, getRelayUrl, isStaticMode, probeAndSetRelayUrl, setRelayUrl } from './paths.js';
 import { buildPlayXboxUrl } from './xbox-catalog.js';
 import { initI18n, setLanguage, setIdentityVersions, t, w } from './i18n.js';
 import { icon, brandWordmark } from './icons.js';
@@ -254,8 +254,8 @@ function renderShell() {
                    <span class="x4-hud-avatar">${escapeHtml(avatarLetter)}<span class="x4-online-dot is-online"></span></span>
                    <span class="x4-hud-gamertag">${escapeHtml(state.auth.gamertag)}</span>
                  </button>`
-              : `<button class="x4-hud-signin x4-focusable" data-action="navigate" data-route="account" type="button">
-                   ${icon('user')} <span>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</span>
+              : `<button class="x4-hud-signin x4-focusable" data-action="open-signin-modal" type="button">
+                   ${icon('user')} <span>${w('msSignInBtn')}</span>
                  </button>`
           }
         </div>
@@ -269,7 +269,7 @@ function renderShell() {
             <strong>XCloud4</strong>
             <span>v${isLab ? '0.7.111-lab' : '1.3.0-beta'}</span>
             <span>·</span>
-            <a href="https://www.xbox.com/play" target="_blank" rel="noopener noreferrer">play.xbox.com</a>
+            <span>Xbox Cloud WebRTC</span>
           </div>
           <div class="x4-footer-links">
             <button class="x4-footer-link x4-focusable" data-action="navigate" data-route="account" type="button">${t('X4_TR_U49_ACCOUNT_TITLE')}</button>
@@ -381,6 +381,233 @@ async function toggleLabMode() {
   renderShell();
 }
 
+let msAuthPopupWindow = null;
+
+function openMicrosoftPopup(otcUrl) {
+  try {
+    msAuthPopupWindow = window.open(
+      otcUrl,
+      'xcloud4_microsoft_signin',
+      'popup=yes,width=500,height=700,noopener=no'
+    );
+    if (msAuthPopupWindow?.focus) msAuthPopupWindow.focus();
+  } catch {
+    // Popup blocker fallback still shows code & QR inside modal
+  }
+}
+
+function closeMicrosoftPopup() {
+  try {
+    if (msAuthPopupWindow && !msAuthPopupWindow.closed) {
+      msAuthPopupWindow.close();
+    }
+  } catch {
+    // Ignore cross-origin close restrictions
+  }
+  msAuthPopupWindow = null;
+}
+
+async function inspectRelayWorkerCode() {
+  try {
+    const code = await fetch(appUrl('workers/xcloud4-relay.js')).then((r) => r.text());
+    showModal({
+      title: 'Cloudflare Worker Xbox Relay (workers/xcloud4-relay.js)',
+      bodyHtml: `
+        <p class="x4-muted">Deploy this zero-dependency script on Cloudflare Workers (free tier) and paste its <code>https://*.workers.dev</code> URL into XCloud4 Relay so GitHub Pages can stream WebRTC directly in-site.</p>
+        <pre class="x4-code-viewer">${escapeHtml(code)}</pre>`,
+      buttons: [
+        {
+          label: 'Copy Worker Script',
+          onClick: async () => {
+            await navigator.clipboard?.writeText(code).catch(() => {});
+            showToast('Worker script copied', 'ok');
+          },
+          closeOnClick: false,
+        },
+        { label: 'Close', primary: true },
+      ],
+    });
+  } catch (err) {
+    showToast(err.message || 'Unable to load worker script', 'danger');
+  }
+}
+
+async function openRelaySetupModal({ pendingProductId = null, customMessage = '' } = {}) {
+  const currentRelay = getRelayUrl();
+  const modal = showModal({
+    title: w('relaySetupTitle'),
+    bodyHtml: `
+      <div class="x4-modal-stack">
+        <p class="x4-muted">${escapeHtml(customMessage || w('relaySetupBody'))}</p>
+        <label class="x4-input-label">
+          <span>Relay URL</span>
+          <input id="x4ModalRelayInput" class="x4-input x4-focusable" type="url"
+            value="${escapeHtml(currentRelay)}" placeholder="${escapeHtml(w('relayPlaceholder'))}" autocomplete="off" />
+        </label>
+        <div id="x4ModalRelayStatus" class="x4-muted"></div>
+      </div>`,
+    buttons: [
+      { label: t('X4_TR_UI2_SETTINGS_LAB_CANCEL') },
+      {
+        label: 'Cloudflare Worker Code',
+        onClick: () => inspectRelayWorkerCode(),
+        closeOnClick: false,
+      },
+      {
+        label: w('connectRelayBtn'),
+        primary: true,
+        closeOnClick: false,
+        onClick: async () => {
+          const input = document.getElementById('x4ModalRelayInput');
+          const statusEl = document.getElementById('x4ModalRelayStatus');
+          if (statusEl) statusEl.textContent = 'Checking relay health...';
+          try {
+            const res = await probeAndSetRelayUrl(input?.value || '');
+            state.serverPings = [];
+            if (res.type === 'cors-proxy') {
+              await api.upgradeSession().catch(() => {});
+            }
+            await syncStateFromBackend();
+            await refreshCatalogData();
+            closeModal();
+            renderShell();
+            showToast(`Relay connected (${res.type})`, 'ok');
+            if (pendingProductId) {
+              if (!state.auth?.signedIn || (res.type === 'node' && !state.auth?.liveStream)) {
+                openMicrosoftSignInModal({
+                  onSuccess: () => startPlayTitle(pendingProductId),
+                });
+              } else {
+                startPlayTitle(pendingProductId);
+              }
+            }
+          } catch (err) {
+            if (statusEl) statusEl.textContent = err.message;
+            showToast(err.message, 'danger');
+          }
+        },
+      },
+    ],
+  });
+  return modal;
+}
+
+async function openMicrosoftSignInModal({ onSuccess = null } = {}) {
+  clearInterval(devicePollTimer);
+  const modal = showModal({
+    title: w('msSignInBtn'),
+    bodyHtml: `<div class="x4-modal-stack"><p class="x4-muted">${escapeHtml(w('signInModalSub'))}</p><div id="x4AuthModalBody"><p class="x4-muted">Requesting Microsoft sign-in code...</p></div></div>`,
+    buttons: [
+      {
+        label: t('X4_TR_UI2_SETTINGS_LAB_CANCEL'),
+        onClick: () => {
+          clearInterval(devicePollTimer);
+          closeMicrosoftPopup();
+          state.deviceLogin = null;
+        },
+      },
+    ],
+  });
+
+  const renderModalError = (message) => {
+    const body = modal.querySelector('#x4AuthModalBody');
+    if (!body) return;
+    body.innerHTML = `
+      <div class="x4-warn-box">
+        <strong>Microsoft OAuth Unavailable</strong>
+        <p>${escapeHtml(message)}</p>
+        <div class="x4-account-cta-row">
+          <button class="x4-btn is-primary x4-focusable" id="x4AuthRetryBtn" type="button">${icon('refresh')} <span>Retry</span></button>
+          <button class="x4-btn is-secondary x4-focusable" id="x4AuthRelayBtn" type="button">${icon('server')} <span>${w('connectRelayBtn')}</span></button>
+        </div>
+      </div>`;
+    body.querySelector('#x4AuthRetryBtn')?.addEventListener('click', () => {
+      closeModal();
+      openMicrosoftSignInModal({ onSuccess });
+    });
+    body.querySelector('#x4AuthRelayBtn')?.addEventListener('click', () => {
+      closeModal();
+      openRelaySetupModal();
+    });
+  };
+
+  try {
+    const res = await api.startDeviceCode();
+    const expiresAt = Date.now() + res.expiresIn * 1000;
+    state.deviceLogin = {
+      userCode: res.userCode,
+      verificationUri: res.verificationUri,
+      expiresAt,
+    };
+    const uri = res.verificationUri || 'https://www.microsoft.com/link';
+    const otcUrl = `${uri}${uri.includes('?') ? '&' : '?'}otc=${encodeURIComponent(res.userCode)}`;
+    const qrSvg = generateQrSvg(otcUrl);
+
+    const body = modal.querySelector('#x4AuthModalBody');
+    if (!body || !document.getElementById('x4ModalOverlay')) return;
+    body.innerHTML = `
+      <div class="x4-device-box">
+        <div class="x4-qr-card">${qrSvg}</div>
+        <div class="x4-device-steps">
+          <div class="x4-step-line"><span class="x4-step-num">1</span><span>${t('X4_TR_U49_ACCOUNT_STEP_SCAN')} <strong>${escapeHtml(uri)}</strong></span></div>
+          <div class="x4-step-line"><span class="x4-step-num">2</span><span>${t('X4_TR_U49_ACCOUNT_STEP_CODE')}</span></div>
+          <div class="x4-code-row">
+            <code class="x4-device-code">${escapeHtml(res.userCode)}</code>
+            <button class="x4-btn is-secondary x4-focusable" id="x4ModalCopyCode" type="button">Copy</button>
+          </div>
+          <div class="x4-account-cta-row">
+            <button class="x4-btn is-primary x4-focusable" id="x4ModalOpenPopup" type="button">
+              ${icon('world')} <span>${escapeHtml(w('openLinkPopup'))}</span>
+            </button>
+          </div>
+          <div class="x4-muted" id="x4ModalAuthWait">${t('X4_TR_U49_ACCOUNT_WAIT')}</div>
+        </div>
+      </div>`;
+
+    body.querySelector('#x4ModalCopyCode')?.addEventListener('click', async () => {
+      await navigator.clipboard?.writeText(res.userCode).catch(() => {});
+      showToast(`Code ${res.userCode} copied`, 'ok');
+    });
+    body.querySelector('#x4ModalOpenPopup')?.addEventListener('click', () => {
+      openMicrosoftPopup(otcUrl);
+    });
+
+    devicePollTimer = setInterval(async () => {
+      if (!document.getElementById('x4ModalOverlay')) {
+        clearInterval(devicePollTimer);
+        closeMicrosoftPopup();
+        return;
+      }
+      const rem = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
+      const waitEl = document.getElementById('x4ModalAuthWait');
+      if (waitEl) waitEl.textContent = `${t('X4_TR_U49_ACCOUNT_WAIT')} (${Math.floor(rem / 60)}m ${rem % 60}s)`;
+
+      try {
+        const polled = await api.pollDeviceCode();
+        if (polled.status === 'authorized') {
+          clearInterval(devicePollTimer);
+          closeMicrosoftPopup();
+          state.deviceLogin = null;
+          state.auth = polled.auth;
+          closeModal();
+          await refreshCatalogData();
+          checkCloudTimeAlerts();
+          showToast(`Signed in as ${state.auth?.gamertag || 'Xbox Player'}`, 'ok');
+          renderShell();
+          if (onSuccess) onSuccess();
+        }
+      } catch (err) {
+        clearInterval(devicePollTimer);
+        closeMicrosoftPopup();
+        state.deviceLogin = null;
+        renderModalError(err.message || 'Sign-in failed');
+      }
+    }, (res.interval || 5) * 1000);
+  } catch (err) {
+    renderModalError(err.message || 'Unable to start Microsoft sign-in');
+  }
+}
+
 async function startDeviceLoginFlow() {
   try {
     const res = await api.startDeviceCode();
@@ -396,6 +623,7 @@ async function startDeviceLoginFlow() {
         const polled = await api.pollDeviceCode();
         if (polled.status === 'authorized') {
           clearInterval(devicePollTimer);
+          closeMicrosoftPopup();
           state.deviceLogin = null;
           state.auth = polled.auth;
           await refreshCatalogData();
@@ -405,6 +633,7 @@ async function startDeviceLoginFlow() {
         }
       } catch (err) {
         clearInterval(devicePollTimer);
+        closeMicrosoftPopup();
         state.deviceLogin = null;
         showToast(err.message || 'Sign-in failed', 'danger');
         renderShell();
@@ -421,6 +650,20 @@ async function startDeviceLoginFlow() {
 }
 
 async function startPlayTitle(productId) {
+  if (!state.auth?.signedIn) {
+    await openMicrosoftSignInModal({
+      onSuccess: () => startPlayTitle(productId),
+    });
+    return;
+  }
+
+  const hasStreamTransport =
+    Boolean(state.auth?.liveStream) || !isStaticMode() || Boolean(getCorsProxyUrl());
+  if (!hasStreamTransport) {
+    await openRelaySetupModal({ pendingProductId: productId });
+    return;
+  }
+
   const item =
     state.selectedProductDetail?.productId === productId
       ? state.selectedProductDetail
@@ -509,21 +752,6 @@ function bindViewInputs() {
 }
 
 async function handleDelegatedClick(e) {
-  // Record play.xbox.com launch into Jump Back In without blocking navigation
-  const playXboxLink = e.target.closest('a[data-play-xbox]');
-  if (playXboxLink) {
-    const pid = playXboxLink.getAttribute('data-play-xbox');
-    const item = state.catalogItems.find((i) => i.productId === pid) || state.selectedProductDetail;
-    if (pid) {
-      api.recordPlayTime(pid, item?.titleId || pid, item?.title || pid, 0)
-        .then((res) => {
-          if (res?.localRecents) state.localRecents = res.localRecents;
-        })
-        .catch(() => {});
-    }
-    return;
-  }
-
   const target = e.target.closest('button, [data-action]');
   if (!target) return;
 
@@ -606,15 +834,35 @@ async function handleDelegatedClick(e) {
     if (pid) startPlayTitle(pid);
     return;
   }
+  if (action === 'open-signin-modal') {
+    await openMicrosoftSignInModal();
+    return;
+  }
+  if (action === 'open-relay-modal') {
+    await openRelaySetupModal();
+    return;
+  }
+  if (action === 'inspect-relay-worker') {
+    await inspectRelayWorkerCode();
+    return;
+  }
+  if (action === 'open-ms-popup') {
+    const otcUrl = target.dataset.otcUrl;
+    if (otcUrl) openMicrosoftPopup(otcUrl);
+    return;
+  }
   if (action === 'save-relay') {
     const input = document.getElementById('x4RelayInput');
     try {
-      const saved = setRelayUrl(input?.value || '');
+      const res = await probeAndSetRelayUrl(input?.value || '');
       state.serverPings = [];
+      if (res.type === 'cors-proxy') {
+        await api.upgradeSession().catch(() => {});
+      }
       await syncStateFromBackend();
       await refreshCatalogData();
       renderShell();
-      showToast(saved ? `Relay connected: ${saved}` : 'Relay cleared (play.xbox.com mode)', 'ok');
+      showToast(res.url ? `Relay connected (${res.type}): ${res.url}` : 'Relay cleared', 'ok');
     } catch (err) {
       showToast(err.message, 'danger');
     }
@@ -626,7 +874,7 @@ async function handleDelegatedClick(e) {
     await syncStateFromBackend();
     await refreshCatalogData();
     renderShell();
-    showToast('Relay disconnected (play.xbox.com mode)', 'ok');
+    showToast('Relay disconnected', 'ok');
     return;
   }
   if (action === 'toggle-lab') {
