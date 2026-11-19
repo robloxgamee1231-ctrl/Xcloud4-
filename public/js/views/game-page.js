@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Dedicated Game Page matching src/ui/game_page.c. */
+/* Dedicated Game Page matching src/ui/game_page.c with play.xbox.com launch & optional live WebRTC. */
 
 import { t, trCategory, w } from '../i18n.js';
 import { icon } from '../icons.js';
-import { artworkUrl, isStaticMode } from '../paths.js';
+import { artworkUrl } from '../paths.js';
 import { buildPlayXboxUrl } from '../xbox-catalog.js';
 import { escapeHtml, formatPlayTime, formatRelativeTime, renderShelfSection } from './cards.js';
 
@@ -17,7 +17,7 @@ export function renderGamePageView(state, item) {
   const rec = localRecents[item.productId];
   const heroBg = item.heroUrl || item.coverUrl || artworkUrl(item.productId, 'hero.svg');
   const playUrl = item.playUrl || buildPlayXboxUrl(item.productId, item.title);
-  const liveStreamReady = Boolean(auth.signedIn && !auth.demoMode);
+  const liveStreamReady = Boolean(auth?.signedIn && auth?.liveStream);
 
   const similar = catalogItems
     .filter((g) => g.productId !== item.productId && (g.category === item.category || g.publisher === item.publisher))
@@ -47,10 +47,10 @@ export function renderGamePageView(state, item) {
           <p class="x4-gamepage-desc">${escapeHtml(item.description || item.shortDescription || '')}</p>
 
           ${
-            rec?.playTimeSec
+            rec?.playTimeSec || rec?.lastPlayedAt
               ? `<div class="x4-gamepage-recents">
-                   <span>${t('X4_TR_U49_PLAY_TIME')}: <strong>${formatPlayTime(rec.playTimeSec)}</strong></span>
-                   <span>${t('X4_TR_U49_LAST_SESSION')}: <strong>${formatRelativeTime(rec.lastPlayedAt)}</strong></span>
+                   ${rec?.playTimeSec ? `<span>${t('X4_TR_U49_PLAY_TIME')}: <strong>${formatPlayTime(rec.playTimeSec)}</strong></span>` : ''}
+                   ${rec?.lastPlayedAt ? `<span>${t('X4_TR_U49_LAST_SESSION')}: <strong>${formatRelativeTime(rec.lastPlayedAt)}</strong></span>` : ''}
                  </div>`
               : ''
           }
@@ -61,18 +61,15 @@ export function renderGamePageView(state, item) {
                 ? `<button class="x4-btn is-primary is-lg x4-focusable" data-action="play-game" data-product-id="${escapeHtml(item.productId)}" type="button">
                      ${icon('play')} <span>${t('X4_TR_APPLE_PLAY_NOW_BTN')}</span>
                    </button>
-                   <a class="x4-btn is-secondary x4-focusable" href="${escapeHtml(playUrl)}" target="_blank" rel="noopener noreferrer">
+                   <a class="x4-btn is-secondary x4-focusable" href="${escapeHtml(playUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="${escapeHtml(item.productId)}">
                      ${icon('world')} <span>${w('playOnXbox')}</span>
                    </a>`
-                : `<a class="x4-btn is-primary is-lg x4-focusable" href="${escapeHtml(playUrl)}" target="_blank" rel="noopener noreferrer">
+                : `<a class="x4-btn is-primary is-lg x4-focusable" href="${escapeHtml(playUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="${escapeHtml(item.productId)}">
                      ${icon('play')} <span>${w('playOnXbox')}</span>
                    </a>
-                   <button class="x4-btn is-secondary x4-focusable" data-action="${auth.signedIn ? 'play-game' : 'demo-play'}" data-product-id="${escapeHtml(item.productId)}" type="button">
-                     ${icon('device-gamepad')} <span>${w('streamPreviewBtn')}</span>
-                   </button>
                    ${
-                     !auth.signedIn && !isStaticMode()
-                       ? `<button class="x4-btn is-ghost x4-focusable" data-action="navigate" data-route="account" type="button">
+                     !auth?.signedIn
+                       ? `<button class="x4-btn is-secondary x4-focusable" data-action="navigate" data-route="account" type="button">
                             ${icon('user')} <span>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</span>
                           </button>`
                        : ''

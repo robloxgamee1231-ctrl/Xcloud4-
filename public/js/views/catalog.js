@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Paginated Catalog Grid Browser matching src/ui/catalog_browser.c. */
+/* Paginated Catalog Grid Browser with Collection Pills (All, Popular, Free, New, Leaving), Genre, Access & Sort. */
 
 import { t, trCategory, w } from '../i18n.js';
 import { escapeHtml, renderGameCard } from './cards.js';
@@ -7,15 +7,23 @@ import { escapeHtml, renderGameCard } from './cards.js';
 const PAGE_SIZE = 24;
 
 export function renderCatalogView(state) {
-  const { catalogItems, catalogSource, favorites, localRecents, catalogFilter } = state;
+  const { catalogItems, catalogSource, publicLists, favorites, localRecents, catalogFilter } = state;
   const favSet = new Set(favorites);
   const isLiveCatalog = catalogSource === 'live' || catalogSource === 'live-snapshot';
+  const activeCol = catalogFilter.collection || 'all';
 
   const genres = ['ALL', ...new Set(catalogItems.map((i) => i.category).filter(Boolean)).values()].sort((a, b) =>
     a === 'ALL' ? -1 : b === 'ALL' ? 1 : a.localeCompare(b)
   );
 
   let filtered = catalogItems.slice();
+  if (activeCol !== 'all' && Array.isArray(publicLists?.[activeCol])) {
+    const colOrder = new Map(publicLists[activeCol].map((id, idx) => [id, idx]));
+    filtered = filtered.filter((i) => colOrder.has(i.productId));
+    if (catalogFilter.sort === 'featured') {
+      filtered.sort((a, b) => colOrder.get(a.productId) - colOrder.get(b.productId));
+    }
+  }
   if (catalogFilter.genre !== 'ALL') {
     filtered = filtered.filter((i) => i.category === catalogFilter.genre);
   }
@@ -40,6 +48,14 @@ export function renderCatalogView(state) {
       ? t('X4_TR_50_HOME_CLOUD_COUNT_ONE_FMT', 1)
       : t('X4_TR_50_CATALOG_FILTER_COUNT_FMT', filtered.length);
 
+  const collections = [
+    { id: 'all', label: w('allGamesChip') },
+    { id: 'popular', label: t('X4_TR_U49_POPULAR_CLOUD') },
+    { id: 'free', label: t('X4_TR_CATALOG_FREE') },
+    { id: 'new', label: t('X4_TR_U49_SORT_NEW') },
+    { id: 'leaving', label: 'Leaving Soon' },
+  ];
+
   return `
     <div class="x4-page">
       <div class="x4-page-header">
@@ -51,6 +67,16 @@ export function renderCatalogView(state) {
           ${isLiveCatalog ? `<span class="x4-pill is-ok">${escapeHtml(w('liveCatalogBadge'))}</span>` : ''}
           <span class="x4-pill is-accent">${escapeHtml(countLabel)}</span>
         </div>
+      </div>
+
+      <div class="x4-quick-chips">
+        ${collections
+          .map(
+            (c) => `
+              <button class="x4-chip ${activeCol === c.id ? 'is-accent' : ''} x4-focusable"
+                data-cat-collection="${c.id}" type="button">${escapeHtml(c.label)}</button>`
+          )
+          .join('')}
       </div>
 
       <div class="x4-filter-bar">

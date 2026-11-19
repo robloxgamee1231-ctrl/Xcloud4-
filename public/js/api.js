@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Frontend REST client for XCloud4 backend relay with automatic static-site browser fallback. */
+/* Frontend REST client for XCloud4 backend relay (same-origin or custom Relay URL) with automatic static-site browser fallback. */
 
-import { appUrl, isStaticMode, setStaticMode } from './paths.js';
+import { apiUrl, getRelayUrl, isStaticMode, setStaticMode } from './paths.js';
 import { staticBackend } from './static-backend.js';
 
 async function request(method, relativePath, body = undefined) {
@@ -13,7 +13,7 @@ async function request(method, relativePath, body = undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(appUrl(relativePath), opts);
+  const res = await fetch(apiUrl(relativePath), opts);
   const ctype = res.headers.get('content-type') || '';
   const text = await res.text();
   if (!ctype.includes('application/json')) {
@@ -45,7 +45,8 @@ function withStaticFallback(methodName, serverFn) {
     try {
       return await serverFn(...args);
     } catch (err) {
-      if (err.isStaticFallbackSignal || err.name === 'TypeError') {
+      // Only switch to static mode when no custom external Relay URL is explicitly configured
+      if (!getRelayUrl() && (err.isStaticFallbackSignal || err.name === 'TypeError')) {
         setStaticMode(true);
         return staticBackend[methodName](...args);
       }
@@ -62,7 +63,6 @@ export const api = {
   ),
   startDeviceCode: withStaticFallback('startDeviceCode', () => request('POST', 'api/auth/device-code', {})),
   pollDeviceCode: withStaticFallback('pollDeviceCode', () => request('POST', 'api/auth/poll', {})),
-  demoSignIn: withStaticFallback('demoSignIn', (gamertag) => request('POST', 'api/auth/demo', { gamertag })),
   logout: withStaticFallback('logout', (forget = false) => request('POST', 'api/auth/logout', { forget })),
   getPublicLists: withStaticFallback('getPublicLists', (market, locale) => {
     const qs = market && locale ? `?market=${encodeURIComponent(market)}&locale=${encodeURIComponent(locale)}` : '';
