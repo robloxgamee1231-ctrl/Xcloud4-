@@ -1,10 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Dedicated Game Page matching src/ui/game_page.c with play.xbox.com launch & optional live WebRTC. */
+/* Dedicated Game Page matching src/ui/game_page.c with in-site WebRTC cloud play. */
 
 import { t, trCategory, w } from '../i18n.js';
 import { icon } from '../icons.js';
 import { artworkUrl } from '../paths.js';
-import { buildPlayXboxUrl } from '../xbox-catalog.js';
 import { escapeHtml, formatPlayTime, formatRelativeTime, renderShelfSection } from './cards.js';
 
 export function renderGamePageView(state, item) {
@@ -16,7 +15,6 @@ export function renderGamePageView(state, item) {
   const inMyGames = myGames.includes(item.productId);
   const rec = localRecents[item.productId];
   const heroBg = item.heroUrl || item.coverUrl || artworkUrl(item.productId, 'hero.svg');
-  const playUrl = item.playUrl || buildPlayXboxUrl(item.productId, item.title);
   const liveStreamReady = Boolean(auth?.signedIn && auth?.liveStream);
 
   const similar = catalogItems
@@ -56,24 +54,15 @@ export function renderGamePageView(state, item) {
           }
 
           <div class="x4-gamepage-actions">
+            <button class="x4-btn is-primary is-lg x4-focusable" data-action="play-game" data-product-id="${escapeHtml(item.productId)}" type="button">
+              ${icon('play')} <span>${liveStreamReady ? t('X4_TR_APPLE_PLAY_NOW_BTN') : w('playNowBtn')}</span>
+            </button>
             ${
-              liveStreamReady
-                ? `<button class="x4-btn is-primary is-lg x4-focusable" data-action="play-game" data-product-id="${escapeHtml(item.productId)}" type="button">
-                     ${icon('play')} <span>${t('X4_TR_APPLE_PLAY_NOW_BTN')}</span>
-                   </button>
-                   <a class="x4-btn is-secondary x4-focusable" href="${escapeHtml(playUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="${escapeHtml(item.productId)}">
-                     ${icon('world')} <span>${w('playOnXbox')}</span>
-                   </a>`
-                : `<a class="x4-btn is-primary is-lg x4-focusable" href="${escapeHtml(playUrl)}" target="_blank" rel="noopener noreferrer" data-play-xbox="${escapeHtml(item.productId)}">
-                     ${icon('play')} <span>${w('playOnXbox')}</span>
-                   </a>
-                   ${
-                     !auth?.signedIn
-                       ? `<button class="x4-btn is-secondary x4-focusable" data-action="navigate" data-route="account" type="button">
-                            ${icon('user')} <span>${t('X4_TR_U49_ACCOUNT_SIGN_IN')}</span>
-                          </button>`
-                       : ''
-                   }`
+              !auth?.signedIn
+                ? `<button class="x4-btn is-secondary x4-focusable" data-action="open-signin-modal" type="button">
+                     ${icon('user')} <span>${w('msSignInBtn')}</span>
+                   </button>`
+                : ''
             }
 
             <button class="x4-btn is-secondary x4-focusable" data-action="toggle-favorite" data-product-id="${escapeHtml(item.productId)}" type="button">

@@ -1244,6 +1244,7 @@ button, input, select { font-family: inherit; color: inherit; }
 }
 .x4-modal-head { display: flex; align-items: center; justify-content: space-between; }
 .x4-modal-head h3 { margin: 0; }
+.x4-modal-stack { display: flex; flex-direction: column; gap: 14px; }
 .x4-modal-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 .x4-qr-modal-center { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
 .x4-lightbox-img { width: 100%; border-radius: 12px; display: block; }

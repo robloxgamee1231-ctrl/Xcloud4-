@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Browser-side LocalStorage, Microsoft OAuth2 / Xbox Catalog, and static-hosting backend (zero demo stubs). */
+/* Browser-side LocalStorage, Microsoft OAuth2, Xbox GSSV WebRTC signaling, and static-hosting backend (zero redirects, zero demo). */
 
-import { appUrl } from './paths.js';
+import { appUrl, getCorsProxyUrl } from './paths.js';
 import {
   FALLBACK_REGIONS,
   buildFallbackCatalogMap,
@@ -20,8 +20,11 @@ const CATALOG_CACHE_TTL_MS = 10 * 60_000;
 
 const MS_OAUTH_CLIENT_ID = '1f907974-e22b-4810-a9de-d9647380c97e';
 const MS_OAUTH_SCOPE = 'xboxlive.signin openid profile offline_access';
+const PASSPORT_SCOPE = 'service::http://Passport.NET/purpose::PURPOSE_XBOX_CLOUD_CONSOLE_TRANSFER_TOKEN';
+const XBOX_ACCESS_KEY = '4BDB3609-C1F1-4195-9B37-FEFF45DA8B8E';
 
 let activeDeviceLogin = null;
+const activeStaticSessions = new Map();
 let catalogCache = {
   ts: 0,
   market: '',
@@ -47,6 +50,24 @@ export function resetStaticCatalogCache() {
   inflightInitial = null;
   inflightHydrate = null;
   activeDeviceLogin = null;
+  activeStaticSessions.clear();
+}
+
+async function xboxFetch(url, options = {}) {
+  const proxyUrl = getCorsProxyUrl();
+  if (proxyUrl) {
+    return fetch(proxyUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url,
+        method: options.method || 'GET',
+        headers: options.headers || {},
+        body: typeof options.body === 'string' ? options.body : undefined,
+      }),
+    });
+  }
+  return fetch(url, options);
 }
 
 function decodeJwtClaims(jwt) {
@@ -64,11 +85,48 @@ function decodeJwtClaims(jwt) {
   }
 }
 
-async function tryBrowserXboxAuthExchange(accessToken) {
-  // Attempt Xbox Live RPS -> XSTS -> GSSV directly from browser when CORS allows.
-  const xblRes = await fetch('https://user.auth.xboxlive.com/user/authenticate', {
+function buildStaticDeviceInfo(profile) {
+  const p = profile || STREAM_PROFILES['1080p-HQ'];
+  if (p.id === '720p60') {
+    return JSON.stringify({
+      appInfo: { env: { clientAppId: 'XCloud4', clientAppType: 'native', clientAppVersion: '0.6.2', httpEnvironment: 'prod' } },
+      dev: { hw: { make: 'Microsoft', model: 'Xbox One' }, os: { name: 'windows', platform: 'console' } },
+    });
+  }
+  if (p.id === '1080p-H') {
+    return JSON.stringify({
+      appInfo: { env: { clientAppId: 'XCloud4', clientAppType: 'native', clientAppVersion: '0.7.33', httpEnvironment: 'prod' } },
+      dev: { hw: { make: 'Sony', model: 'PS4' }, os: { name: 'windows', platform: 'console' } },
+    });
+  }
+  return JSON.stringify({
+    appInfo: {
+      env: {
+        clientAppId: 'www.xbox.com',
+        clientAppType: 'browser',
+        clientAppVersion: '26.1.97',
+        clientSdkVersion: '10.3.7',
+        httpEnvironment: 'prod',
+        sdkInstallId: '',
+      },
+    },
+    dev: {
+      os: { name: 'windows', ver: '22631.2715', platform: 'desktop' },
+      hw: { make: 'Microsoft', model: 'unknown', sdktype: 'web' },
+      browser: { browserName: 'chrome', browserVersion: '140.0.3485.54' },
+      displayInfo: { dimensions: { widthInPixels: 4096, heightInPixels: 2160 }, pixelDensity: { dpiX: 1, dpiY: 1 } },
+    },
+  });
+}
+
+function getCountryIp(code) {
+  return ACCESS_COUNTRIES.find((c) => c.code === code)?.ip || null;
+}
+
+async function tryBrowserXboxAuthExchange(accessToken, refreshToken = '', accessCountry = 'Auto') {
+  const xblRes = await xboxFetch('https://user.auth.xboxlive.com/user/authenticate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'x-xbl-contract-version': '2' },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'x-xbl-contract-version': '1' },
     body: JSON.stringify({
       Properties: { AuthMethod: 'RPS', SiteName: 'user.auth.xboxlive.com', RpsTicket: `d=${accessToken}` },
       RelyingParty: 'http://auth.xboxlive.com',
@@ -82,7 +140,7 @@ async function tryBrowserXboxAuthExchange(accessToken) {
   if (!xblToken) throw new Error('Missing XBL token');
 
   const authorizeRelyingParty = async (rp) => {
-    const r = await fetch('https://xsts.auth.xboxlive.com/xsts/authorize', {
+    const r = await xboxFetch('https://xsts.auth.xboxlive.com/xsts/authorize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'x-xbl-contract-version': '1' },
       body: JSON.stringify({
@@ -91,10 +149,12 @@ async function tryBrowserXboxAuthExchange(accessToken) {
         TokenType: 'JWT',
       }),
     });
-    if (!r.ok) throw new Error(`XSTS HTTP ${r.status}`);
-    const data = await r.json();
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data?.Token) {
+      throw Object.assign(new Error(`XSTS HTTP ${r.status}`), { xerr: Number(data?.XErr || 0) });
+    }
     const xui = data?.DisplayClaims?.xui?.[0] || {};
-    return { token: data?.Token, uhs: xui.uhs || uhs, gtg: xui.gtg || '' };
+    return { token: data.Token, uhs: xui.uhs || uhs, gtg: xui.gtg || xui.mgt || '' };
   };
 
   const xstsGssv = await authorizeRelyingParty('http://gssv.xboxlive.com/');
@@ -108,10 +168,13 @@ async function tryBrowserXboxAuthExchange(accessToken) {
     }
   }
 
+  const xffIp = getCountryIp(accessCountry);
   for (const offeringId of ['xgpuweb', 'xgpuwebf2p']) {
-    const gRes = await fetch(`https://${offeringId}.gssv-play-prod.xboxlive.com/v2/login/user`, {
+    const headers = { 'Content-Type': 'application/json', 'x-gssv-client': 'XboxComBrowser' };
+    if (xffIp) headers['X-Forwarded-For'] = xffIp;
+    const gRes = await xboxFetch(`https://${offeringId}.gssv-play-prod.xboxlive.com/v2/login/user`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-gssv-client': 'XboxComBrowser' },
+      headers,
       body: JSON.stringify({ token: xstsGssv.token, offeringId }),
     });
     if (gRes.ok) {
@@ -122,6 +185,8 @@ async function tryBrowserXboxAuthExchange(accessToken) {
           liveStream: true,
           gamertag: gamertag || 'Xbox Player',
           uhs: xstsGssv.uhs,
+          xblToken,
+          refreshToken,
           gsToken: g.gsToken,
           gsExpiresAt: Date.now() + Number(g.durationInSeconds || 14400) * 1000,
           offeringId: g.offeringSettings?.offeringId || offeringId,
@@ -131,6 +196,24 @@ async function tryBrowserXboxAuthExchange(accessToken) {
     }
   }
   throw new Error('GSSV login failed');
+}
+
+async function gssvRequest(method, baseUri, endpoint, gsToken, deviceInfo, body = null) {
+  const headers = {
+    Authorization: `Bearer ${gsToken}`,
+    'X-MS-Device-Info': deviceInfo,
+    Accept: 'application/json',
+  };
+  const init = { method, headers };
+  if (body !== null && body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    init.body = typeof body === 'string' ? body : JSON.stringify(body);
+  }
+  const res = await xboxFetch(`${baseUri}${endpoint}`, init);
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch {}
+  return { ok: res.ok, status: res.status, json, text };
 }
 
 async function fetchDeployedSnapshot() {
@@ -155,7 +238,6 @@ async function ensureStaticCatalog({ market, locale, hydrateAll = false } = {}) 
   if (!fresh) {
     if (!inflightInitial) {
       inflightInitial = (async () => {
-        // Tier 1: Live Microsoft / Xbox Cloud Gaming SIGL + DisplayCatalog v7.0
         try {
           const live = await fetchFullXboxCatalogSnapshot({
             market,
@@ -176,7 +258,6 @@ async function ensureStaticCatalog({ market, locale, hydrateAll = false } = {}) 
           };
           return catalogCache;
         } catch {
-          // Tier 2: Prebuilt real catalog snapshot shipped with static site (data/xbox-catalog.json)
           try {
             const snap = await fetchDeployedSnapshot();
             if (snap) {
@@ -194,7 +275,6 @@ async function ensureStaticCatalog({ market, locale, hydrateAll = false } = {}) 
           } catch {
             // Fall through to Tier 3
           }
-          // Tier 3: Offline fallback
           const fb = buildStaticPublicLists();
           catalogCache = {
             ts: Date.now(),
@@ -267,12 +347,12 @@ const ACCESS_COUNTRIES = [
 ];
 
 const STREAM_PROFILES = {
-  '720p60': { id: '720p60', label: '720p60', width: 1280, height: 720, fps: 60, bitrateKbps: 9000 },
-  '720p-HQ': { id: '720p-HQ', label: '720p-HQ', width: 1280, height: 720, fps: 60, bitrateKbps: 12000 },
-  '1080p-G': { id: '1080p-G', label: '1080p-G', width: 1920, height: 1080, fps: 60, bitrateKbps: 12000 },
-  '1080p-G8': { id: '1080p-G8', label: '1080p-G8', width: 1920, height: 1080, fps: 60, bitrateKbps: 12000 },
-  '1080p-H': { id: '1080p-H', label: '1080p-H', width: 1920, height: 1080, fps: 60, bitrateKbps: 15000 },
-  '1080p-HQ': { id: '1080p-HQ', label: '1080p-HQ', width: 1920, height: 1080, fps: 60, bitrateKbps: 18000 },
+  '720p60': { id: '720p60', label: '720p60', width: 1280, height: 720, fps: 60, bitrateKbps: 9000, resolutionAlias: null },
+  '720p-HQ': { id: '720p-HQ', label: '720p-HQ', width: 1280, height: 720, fps: 60, bitrateKbps: 12000, resolutionAlias: '720HQ' },
+  '1080p-G': { id: '1080p-G', label: '1080p-G', width: 1920, height: 1080, fps: 60, bitrateKbps: 12000, resolutionAlias: '1080' },
+  '1080p-G8': { id: '1080p-G8', label: '1080p-G8', width: 1920, height: 1080, fps: 60, bitrateKbps: 12000, resolutionAlias: '1080' },
+  '1080p-H': { id: '1080p-H', label: '1080p-H', width: 1920, height: 1080, fps: 60, bitrateKbps: 15000, resolutionAlias: '1080' },
+  '1080p-HQ': { id: '1080p-HQ', label: '1080p-HQ', width: 1920, height: 1080, fps: 60, bitrateKbps: 18000, resolutionAlias: '1080HQ' },
 };
 
 const DEFAULT_SETTINGS = {
@@ -390,13 +470,62 @@ function sanitizeAuth(auth) {
     gamertag: auth.gamertag || 'Xbox Player',
     email: auth.email || '',
     uhs: auth.uhs || '',
-    offeringId: auth.offeringId || 'play.xbox.com',
+    offeringId: auth.offeringId || 'xgpuweb',
     regions: Array.isArray(auth.regions) ? auth.regions : FALLBACK_REGIONS,
     activeRegion: auth.activeRegion || FALLBACK_REGIONS[0],
     expiresAt: auth.expiresAt || Date.now() + 3600_000,
     hasRefreshToken: Boolean(auth.refreshToken),
     cloudTime: auth.cloudTime || null,
   };
+}
+
+async function ensureStaticGssvAuth() {
+  const st = readLocalState();
+  if (!st.auth) throw Object.assign(new Error('Not signed in'), { status: 401 });
+  if (st.auth.gsToken && Date.now() < (st.auth.gsExpiresAt || 0) - 60_000) {
+    return { st, auth: st.auth };
+  }
+  if (st.auth.refreshToken) {
+    try {
+      const refRes = await xboxFetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: MS_OAUTH_CLIENT_ID,
+          refresh_token: st.auth.refreshToken,
+          scope: MS_OAUTH_SCOPE,
+        }).toString(),
+      });
+      if (refRes.ok) {
+        const tokens = await refRes.json();
+        const xbx = await tryBrowserXboxAuthExchange(
+          tokens.access_token,
+          tokens.refresh_token || st.auth.refreshToken,
+          st.settings?.public?.accessCountry || 'Auto'
+        );
+        const activeRegion =
+          xbx.regions.find((r) => r.name === st.settings.public.serverName) ||
+          xbx.regions.find((r) => r.isDefault) ||
+          xbx.regions[0] ||
+          null;
+        st.auth = {
+          ...st.auth,
+          ...xbx,
+          activeRegion,
+          expiresAt: Date.now() + Number(tokens.expires_in || 3600) * 1000,
+        };
+        writeLocalState(st);
+        return { st, auth: st.auth };
+      }
+    } catch {
+      // Fall through
+    }
+  }
+  throw Object.assign(
+    new Error('Xbox Cloud WebRTC requires an XCloud4 Relay (Node server or Cloudflare CORS Relay) so Xbox GSSV signaling works inside the site.'),
+    { status: 401, payload: { relayRequired: true } }
+  );
 }
 
 async function probeRegionBrowserRttMs(host, timeoutMs = 1800) {
@@ -516,13 +645,13 @@ export const staticBackend = {
 
   async startDeviceCode() {
     try {
-      const res = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode', {
+      const res = await xboxFetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           client_id: MS_OAUTH_CLIENT_ID,
           scope: MS_OAUTH_SCOPE,
-        }),
+        }).toString(),
       });
       const data = await res.json();
       if (!res.ok || !data?.device_code) {
@@ -548,7 +677,7 @@ export const staticBackend = {
     } catch (err) {
       if (err.payload) throw err;
       throw Object.assign(
-        new Error('Unable to reach Microsoft OAuth directly from browser. Sign in on play.xbox.com or connect an XCloud4 Relay URL.'),
+        new Error('Unable to reach Microsoft OAuth from this browser. Connect an XCloud4 Relay URL or retry when online.'),
         { status: 503, payload: { oauthUnavailable: true, staticSiteMode: true } }
       );
     }
@@ -562,14 +691,14 @@ export const staticBackend = {
         payload: { status: 'expired' },
       });
     }
-    const res = await fetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', {
+    const res = await xboxFetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
         client_id: MS_OAUTH_CLIENT_ID,
         device_code: activeDeviceLogin.deviceCode,
-      }),
+      }).toString(),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -590,7 +719,11 @@ export const staticBackend = {
 
     let authRecord = null;
     try {
-      const xbx = await tryBrowserXboxAuthExchange(data.access_token);
+      const xbx = await tryBrowserXboxAuthExchange(
+        data.access_token,
+        data.refresh_token || '',
+        st.settings?.public?.accessCountry || 'Auto'
+      );
       const activeRegion =
         xbx.regions.find((r) => r.name === st.settings.public.serverName) ||
         xbx.regions.find((r) => r.isDefault) ||
@@ -610,10 +743,11 @@ export const staticBackend = {
       authRecord = {
         provider: 'microsoft',
         liveStream: false,
+        refreshToken: data.refresh_token || '',
         gamertag: claims?.name || claims?.preferred_username || claims?.email || 'Xbox Player',
         email: claims?.email || claims?.preferred_username || '',
         uhs: claims?.sub || '',
-        offeringId: 'play.xbox.com',
+        offeringId: 'xbox-microsoft-account',
         regions: FALLBACK_REGIONS,
         activeRegion,
         expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000,
@@ -629,6 +763,7 @@ export const staticBackend = {
     const st = readLocalState();
     st.auth = null;
     activeDeviceLogin = null;
+    activeStaticSessions.clear();
     if (forget) {
       st.favorites = [];
       st.myGames = [];
@@ -636,6 +771,48 @@ export const staticBackend = {
     }
     writeLocalState(st);
     return { ok: true, auth: { signedIn: false } };
+  },
+
+  async upgradeSession() {
+    const st = readLocalState();
+    if (!st.auth) return { ok: false, auth: { signedIn: false } };
+    if (st.auth.gsToken && Date.now() < (st.auth.gsExpiresAt || 0) - 60_000) {
+      return { ok: true, auth: sanitizeAuth(st.auth) };
+    }
+    if (st.auth.refreshToken) {
+      const refRes = await xboxFetch('https://login.microsoftonline.com/consumers/oauth2/v2.0/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: MS_OAUTH_CLIENT_ID,
+          refresh_token: st.auth.refreshToken,
+          scope: MS_OAUTH_SCOPE,
+        }).toString(),
+      });
+      if (refRes.ok) {
+        const tokens = await refRes.json();
+        const xbx = await tryBrowserXboxAuthExchange(
+          tokens.access_token,
+          tokens.refresh_token || st.auth.refreshToken,
+          st.settings?.public?.accessCountry || 'Auto'
+        );
+        const activeRegion =
+          xbx.regions.find((r) => r.name === st.settings.public.serverName) ||
+          xbx.regions.find((r) => r.isDefault) ||
+          xbx.regions[0] ||
+          null;
+        st.auth = {
+          ...st.auth,
+          ...xbx,
+          activeRegion,
+          expiresAt: Date.now() + Number(tokens.expires_in || 3600) * 1000,
+        };
+        writeLocalState(st);
+        return { ok: true, auth: sanitizeAuth(st.auth) };
+      }
+    }
+    return { ok: false, auth: sanitizeAuth(st.auth) };
   },
 
   async getPublicLists(reqMarket, reqLocale) {
@@ -665,7 +842,22 @@ export const staticBackend = {
 
   async getRecents() {
     const st = readLocalState();
-    return { localRecents: st.localRecents, remoteMru: [] };
+    if (st.auth?.gsToken && st.auth?.activeRegion?.baseUri) {
+      try {
+        const profile = resolveProfile(st.settings);
+        const r = await gssvRequest('GET', st.auth.activeRegion.baseUri, '/v2/mru?mr=25', st.auth.gsToken, buildStaticDeviceInfo(profile));
+        if (r.ok && Array.isArray(r.json?.results)) {
+          return {
+            mru: r.json.results.map((x) => x.details?.productId || x.titleId).filter(Boolean),
+            localRecents: st.localRecents,
+            source: 'live',
+          };
+        }
+      } catch {
+        // Fallback to local
+      }
+    }
+    return { localRecents: st.localRecents, mru: [] };
   },
 
   async getProductDetails(id) {
@@ -752,22 +944,148 @@ export const staticBackend = {
     return { regions: results };
   },
 
-  async playSession() {
-    throw Object.assign(
-      new Error('Direct WebRTC sessions require an Xbox GSSV token from an XCloud4 Relay server, or launch directly on play.xbox.com.'),
-      { status: 401, payload: { usePlayXbox: true } }
-    );
+  async playSession(titleId) {
+    const { st, auth } = await ensureStaticGssvAuth();
+    const profile = resolveProfile(st.settings);
+    const { locale } = normalizeLocaleMarket(st.settings?.public?.language);
+    const baseUri = auth.activeRegion?.baseUri || auth.regions?.[0]?.baseUri;
+    const deviceInfo = buildStaticDeviceInfo(profile);
+    const playBody = JSON.stringify({
+      clientSessionId: '',
+      titleId,
+      systemUpdateGroup: '',
+      settings: {
+        nanoVersion: 'V3;WebrtcTransport.dll',
+        enableOptionalDataCollection: false,
+        enableTextToSpeech: false,
+        highContrast: 0,
+        locale: locale || 'en-US',
+        useIceConnection: false,
+        timezoneOffsetMinutes: -new Date().getTimezoneOffset(),
+        sdkType: 'web',
+        osName: 'windows',
+      },
+      serverId: '',
+      fallbackRegionNames: [],
+    });
+    const resPlay = await gssvRequest('POST', baseUri, '/v5/sessions/cloud/play', auth.gsToken, deviceInfo, playBody);
+    if (!resPlay.ok || !resPlay.json?.sessionPath) {
+      throw Object.assign(new Error(resPlay.json?.errorDetails?.message || resPlay.json?.message || 'Play request failed'), {
+        status: resPlay.status || 502,
+      });
+    }
+    const sessionId = String(resPlay.json.sessionPath).split('/').filter(Boolean).pop();
+    activeStaticSessions.set(sessionId, { baseUri, profile, deviceInfo });
+    return { ok: true, sessionId, profile };
   },
 
-  async getWaitTime() { return { estimatedTotalWaitTimeInSeconds: 0 }; },
-  async getSessionState() { throw Object.assign(new Error('Relay required'), { status: 401 }); },
-  async connectSession() { throw Object.assign(new Error('Relay required'), { status: 401 }); },
-  async sendSdpOffer() { throw Object.assign(new Error('Relay required'), { status: 401 }); },
-  async getSdpAnswer() { throw Object.assign(new Error('Relay required'), { status: 401 }); },
-  async sendIceCandidates() { throw Object.assign(new Error('Relay required'), { status: 401 }); },
-  async getIceCandidates() { throw Object.assign(new Error('Relay required'), { status: 401 }); },
-  async keepaliveSession() { return { ok: false }; },
-  async deleteSession() { return { ok: true }; },
+  async getWaitTime(titleId) {
+    const { auth, st } = await ensureStaticGssvAuth();
+    const baseUri = auth.activeRegion?.baseUri || auth.regions?.[0]?.baseUri;
+    const r = await gssvRequest('GET', baseUri, `/v1/waittime/${encodeURIComponent(titleId)}`, auth.gsToken, buildStaticDeviceInfo(resolveProfile(st.settings)));
+    return r.json || { estimatedTotalWaitTimeInSeconds: 0 };
+  },
+
+  async getSessionState(id) {
+    const sess = activeStaticSessions.get(id);
+    if (!sess) throw Object.assign(new Error('Unknown session'), { status: 404 });
+    const { auth } = await ensureStaticGssvAuth();
+    const r = await gssvRequest('GET', sess.baseUri, `/v5/sessions/cloud/${id}/state`, auth.gsToken, sess.deviceInfo);
+    return r.json || {};
+  },
+
+  async connectSession(id) {
+    const sess = activeStaticSessions.get(id);
+    if (!sess) throw Object.assign(new Error('Unknown session'), { status: 404 });
+    const { auth } = await ensureStaticGssvAuth();
+    let userToken = '';
+    if (auth.refreshToken) {
+      const pRes = await xboxFetch('https://login.live.com/oauth20_token.srf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: MS_OAUTH_CLIENT_ID,
+          grant_type: 'refresh_token',
+          refresh_token: auth.refreshToken,
+          scope: PASSPORT_SCOPE,
+        }).toString(),
+      });
+      const pData = await pRes.json().catch(() => ({}));
+      userToken = pData?.access_token || '';
+    }
+    const r = await gssvRequest('POST', sess.baseUri, `/v5/sessions/cloud/${id}/connect`, auth.gsToken, sess.deviceInfo, { userToken });
+    return r.json || { ok: r.ok };
+  },
+
+  async sendSdpOffer(id, sdp) {
+    const sess = activeStaticSessions.get(id);
+    if (!sess) throw Object.assign(new Error('Unknown session'), { status: 404 });
+    const { auth } = await ensureStaticGssvAuth();
+    const r = await gssvRequest('POST', sess.baseUri, `/v5/sessions/cloud/${id}/sdp`, auth.gsToken, sess.deviceInfo, {
+      messageType: 'offer',
+      sdp,
+      requestId: '1',
+      configuration: {
+        chatConfiguration: { format: 'opus', maxChannels: 1, minVersion: 1, maxVersion: 1 },
+        control: { minVersion: 1, maxVersion: 3 },
+        input: { minVersion: 1, maxVersion: 9 },
+        message: { minVersion: 1, maxVersion: 1 },
+        reliableinput: { minVersion: 1, maxVersion: 9 },
+        unreliableinput: { minVersion: 1, maxVersion: 9 },
+      },
+    });
+    return r.json || {};
+  },
+
+  async getSdpAnswer(id) {
+    const sess = activeStaticSessions.get(id);
+    if (!sess) throw Object.assign(new Error('Unknown session'), { status: 404 });
+    const { auth } = await ensureStaticGssvAuth();
+    const r = await gssvRequest('GET', sess.baseUri, `/v5/sessions/cloud/${id}/sdp`, auth.gsToken, sess.deviceInfo);
+    if (r.status === 204) return { pending: true };
+    return r.json || {};
+  },
+
+  async sendIceCandidates(id, candidates) {
+    const sess = activeStaticSessions.get(id);
+    if (!sess) throw Object.assign(new Error('Unknown session'), { status: 404 });
+    const { auth } = await ensureStaticGssvAuth();
+    const r = await gssvRequest('POST', sess.baseUri, `/v5/sessions/cloud/${id}/ice`, auth.gsToken, sess.deviceInfo, {
+      messageType: 'iceCandidate',
+      candidates: (candidates || []).map((c) => (typeof c === 'string' ? c : JSON.stringify(c))),
+      requestId: '1',
+    });
+    return r.json || {};
+  },
+
+  async getIceCandidates(id) {
+    const sess = activeStaticSessions.get(id);
+    if (!sess) throw Object.assign(new Error('Unknown session'), { status: 404 });
+    const { auth } = await ensureStaticGssvAuth();
+    const r = await gssvRequest('GET', sess.baseUri, `/v5/sessions/cloud/${id}/ice`, auth.gsToken, sess.deviceInfo);
+    if (r.status === 204) return { pending: true, candidates: [] };
+    return r.json || {};
+  },
+
+  async keepaliveSession(id) {
+    const sess = activeStaticSessions.get(id);
+    if (!sess) return { ok: false };
+    const { auth } = await ensureStaticGssvAuth();
+    const r = await gssvRequest('POST', sess.baseUri, `/v5/sessions/cloud/${id}/keepalive`, auth.gsToken, sess.deviceInfo, '');
+    return r.json || { ok: r.ok };
+  },
+
+  async deleteSession(id) {
+    const sess = activeStaticSessions.get(id);
+    if (!sess) return { ok: true };
+    try {
+      const { auth } = await ensureStaticGssvAuth();
+      await gssvRequest('DELETE', sess.baseUri, `/v5/sessions/cloud/${id}`, auth.gsToken, sess.deviceInfo);
+    } finally {
+      activeStaticSessions.delete(id);
+    }
+    return { ok: true };
+  },
 
   async checkUpdates() {
     const st = readLocalState();

@@ -20,6 +20,14 @@ export async function buildStaticSite(outDir = path.join(REPO_ROOT, '_site')) {
   await fs.mkdir(path.join(outDir, 'docs'), { recursive: true });
   await fs.cp(licensesDir, path.join(outDir, 'docs', 'licenses'), { recursive: true });
 
+  const workersDir = path.join(REPO_ROOT, 'workers');
+  try {
+    await fs.mkdir(path.join(outDir, 'workers'), { recursive: true });
+    await fs.cp(workersDir, path.join(outDir, 'workers'), { recursive: true });
+  } catch {
+    // Optional workers directory
+  }
+
   for (const docFile of ['LICENSE', 'NOTICE.md']) {
     try {
       await fs.copyFile(path.join(REPO_ROOT, docFile), path.join(outDir, docFile));
